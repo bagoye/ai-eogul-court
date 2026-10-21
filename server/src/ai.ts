@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type ThinkingLevel } from '@google/genai';
 import { z } from 'zod';
 import type { Trial, Speaker, Photo } from '../../shared/types.js';
 import { AppError } from './errors.js';
@@ -85,10 +85,10 @@ export function validateOutput(raw: unknown, context: AIContext): AIOutput {
           : operation === 'opening'
             ? ['plaintiff', 'defendant']
             : [target!];
-  if (
-    out.messages.some((m) => !allowed.includes(m.speaker)) ||
-    new Set(out.messages.map((m) => m.speaker)).size !== out.messages.length
-  )
+  // Lighter models sometimes add a line for a role that may not speak now. Dropping it is
+  // safe: nothing is reassigned, and the remaining lines must still satisfy every rule below.
+  out.messages = out.messages.filter((m) => allowed.includes(m.speaker));
+  if (new Set(out.messages.map((m) => m.speaker)).size !== out.messages.length)
     throw new Error('Invalid speaker');
   const expected =
     operation === 'verdict'
@@ -114,7 +114,18 @@ export function validateOutput(raw: unknown, context: AIContext): AIOutput {
   return out;
 }
 
+const THINKING = ['default', 'minimal', 'low', 'medium', 'high'];
 export function createGeminiProvider(): Provider {
+  // Short dialogue does not need long reasoning; the model default thinks for 10s+ per turn.
+  const thinking = (process.env.GEMINI_THINKING_LEVEL || 'low').toLowerCase();
+  if (!THINKING.includes(thinking))
+    throw new Error('GEMINI_THINKING_LEVEL must be default, minimal, low, medium or high');
+  const thinkingLevel =
+    thinking === 'default' ? undefined : (thinking.toUpperCase() as ThinkingLevel);
+  const primary = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  // Quotas and overload are per model, so the second attempt goes to another model.
+  // Set GEMINI_FALLBACK_MODEL= (empty) to retry the primary model instead.
+  const fallback = process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.5-flash-lite';
   return async (context) => {
     const key = process.env.GEMINI_API_KEY;
     if (!key)
@@ -125,10 +136,11 @@ export function createGeminiProvider(): Provider {
       );
     const ai = new GoogleGenAI({ apiKey: key });
     const { photos = [], ...rest } = context;
+    let busy = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+          model: attempt === 0 ? primary : fallback || primary,
           contents: [
             {
               role: 'user',
@@ -151,24 +163,50 @@ export function createGeminiProvider(): Provider {
             responseJsonSchema: z.toJSONSchema(outputSchema),
             temperature: 0.35,
             maxOutputTokens: 4096,
-            httpOptions: { timeout: 25000 },
+            ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+            // Give up on a slow primary early so the fallback still answers within ~30s.
+            httpOptions: { timeout: attempt === 0 ? 12000 + photos.length * 4000 : 20000 },
           },
         });
         return validateOutput(JSON.parse(response.text || ''), context);
       } catch (err) {
         const status = (err as { status?: number }).status;
+        // Rule names and status codes only: never prompts, stories, keys or raw SDK messages.
+        const reason =
+          err instanceof z.ZodError
+            ? `schema ${err.issues.map((i) => `${i.path.join('.')}:${i.code}`).join(',')}`
+            : status
+              ? `status ${status}`
+              : err instanceof SyntaxError
+                ? 'invalid JSON'
+                : err instanceof Error && !(err instanceof AppError)
+                  ? err.message.slice(0, 80)
+                  : 'unknown';
+        console.warn(
+          `[ai] ${context.operation} attempt ${attempt + 1} on ${attempt === 0 ? primary : fallback || primary} failed: ${reason}`,
+        );
         if (status === 401 || status === 403)
           throw new AppError(
             503,
             'AI_AUTH',
             'AI 인증에 실패했습니다. 서버의 API 키와 접근 권한을 확인해 주세요.',
           );
-        if (attempt === 1)
+        // Overload or quota on either model means "try again shortly", not a broken request.
+        busy ||= status === 429 || status === 503 || status === 504;
+        // Retrying a rate-limited model immediately only burns more quota.
+        if (attempt === 1 || (status === 429 && !fallback)) {
+          if (busy)
+            throw new AppError(
+              429,
+              'AI_BUSY',
+              'AI 서버가 혼잡하거나 사용 한도에 도달했습니다. 작성한 내용은 그대로 있으니 1분쯤 뒤에 다시 시도해 주세요.',
+            );
           throw new AppError(
             502,
             'AI_UNAVAILABLE',
             'AI 응답을 완성하지 못했습니다. 재판 내용은 유지됩니다. 잠시 후 다시 시도해 주세요.',
           );
+        }
       }
     }
     throw new AppError(502, 'AI_UNAVAILABLE', 'AI 연결에 실패했습니다.');

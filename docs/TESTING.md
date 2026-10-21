@@ -12,7 +12,7 @@
 | `npm run typecheck`            | 통과       | 클라이언트·서버 타입 검사                             |
 | `npm run lint`                 | 통과       | ESLint                                                |
 | `npm test`                     | 30개 통과  | 상태 머신 12, HTTP API 10, Gemini 어댑터 계약 8       |
-| `npm run test:e2e`             | 12개 통과  | 6개 시나리오 × 데스크톱·모바일 Chromium               |
+| `npm run test:e2e`             | 14개 통과  | 7개 시나리오 × 데스크톱·모바일 Chromium               |
 | 설치 시 npm audit              | 취약점 0개 | 기존 테스트 도구를 수정된 버전으로 업데이트한 후 결과 |
 | 실제 Gemini 플레이             | 미검증     | API 키 미제공                                         |
 | 실제 iOS Safari / Android 기기 | 미검증     | 모바일은 Chromium 기기 에뮬레이션                     |
