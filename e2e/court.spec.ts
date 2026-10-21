@@ -104,3 +104,54 @@ test('F: connection errors preserve the story and can be retried', async ({ page
   await expect(page.getByLabel('사건 내용')).not.toBeEmpty();
   await expect(page.getByRole('button', { name: '재판 시작하기' })).toBeEnabled();
 });
+
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+test('photo evidence and voice input reach the record', async ({ page }) => {
+  await page.addInitScript(() => {
+    class FakeRecognition {
+      onresult: ((e: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      start() {
+        setTimeout(() => {
+          const result = Object.assign([{ transcript: '말로 덧붙인 이야기입니다' }], {
+            isFinal: true,
+          });
+          this.onresult?.({ resultIndex: 0, results: [result] });
+          this.onend?.();
+        }, 50);
+      }
+      stop() {
+        this.onend?.();
+      }
+    }
+    Object.assign(window, {
+      SpeechRecognition: FakeRecognition,
+      webkitSpeechRecognition: FakeRecognition,
+    });
+  });
+  await page.goto('/intake/plaintiff');
+  await page.getByRole('button', { name: /사라진 마지막 치킨/ }).click();
+  await page.getByRole('button', { name: '음성 입력' }).click();
+  await expect(page.getByLabel('사건 내용')).toHaveValue(/말로 덧붙인 이야기입니다$/);
+  await page
+    .getByLabel('사진 증거 첨부')
+    .setInputFiles({ name: 'chicken.png', mimeType: 'image/png', buffer: png });
+  await expect(page.getByRole('img', { name: '첨부한 사진 1' })).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBeTruthy();
+  await page.getByRole('button', { name: '재판 시작하기' }).click();
+  await expect(page.getByText('1 / 3', { exact: true })).toBeVisible();
+  await page
+    .getByLabel('사진 증거 첨부')
+    .setInputFiles({ name: 'fridge.png', mimeType: 'image/png', buffer: png });
+  await page.getByLabel('질문에 대한 진술').fill('냉장고에 이름표를 붙여 두었어요.');
+  await page.getByRole('button', { name: '진술하기' }).click();
+  await expect(page.getByText('사진 1장 제출')).toBeVisible();
+  await expect(page.getByText(/1장 남음/)).toBeVisible();
+  await page.getByRole('button', { name: /사건 기록 보기/ }).click();
+  await expect(page.getByText(/^사진 2: /)).toBeVisible();
+});

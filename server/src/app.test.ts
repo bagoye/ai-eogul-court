@@ -115,6 +115,40 @@ describe('HTTP API', () => {
       .send({ ...payload, title: '다른 내용' })
       .expect(409);
   });
+  it('records photo evidence for plaintiffs and rejects invalid or excess photos', async () => {
+    const agent = request.agent(createApp({ mode: 'mock' }));
+    const png = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' };
+    const created = await agent
+      .post('/api/trials')
+      .send({ ...data(), photos: [png, png] })
+      .expect(201);
+    expect(created.body.evidence).toHaveLength(2);
+    expect(created.body.evidence[0]).toMatch(/^사진 1: /);
+    expect(JSON.stringify(created.body)).not.toContain(png.data);
+    const actions = `/api/trials/${created.body.id}/actions`;
+    const answer = { type: 'answer', version: 0, input: '정한 약속은 없었어요.' };
+    const tooMany = await agent
+      .post(actions)
+      .send({ ...answer, requestId: randomUUID(), photos: [png, png] })
+      .expect(400);
+    expect(tooMany.body.error.code).toBe('PHOTO_LIMIT');
+    const fake = { mimeType: 'image/png', data: Buffer.from('<svg></svg>').toString('base64') };
+    const invalid = await agent
+      .post(actions)
+      .send({ ...answer, requestId: randomUUID(), photos: [fake] })
+      .expect(400);
+    expect(invalid.body.error.code).toBe('INVALID_PHOTO');
+    const ok = await agent
+      .post(actions)
+      .send({ ...answer, requestId: randomUUID(), photos: [png] })
+      .expect(200);
+    expect(ok.body.evidence).toHaveLength(3);
+    expect(ok.body.messages.find((m: { speaker: string }) => m.speaker === 'user').photos).toBe(1);
+    const judge = await agent
+      .post('/api/trials')
+      .send({ requestId: randomUUID(), mode: 'judge', caseId: 'chicken', photos: [png] });
+    expect(judge.status).toBe(400);
+  });
   it('accepts only the configured APP_ORIGIN in production', async () => {
     vi.stubEnv('APP_ORIGIN', 'https://court.example.com');
     const app = createApp({ production: true, mode: 'gemini', provider: mockProvider });

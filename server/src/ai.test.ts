@@ -6,7 +6,7 @@ vi.mock('@google/genai', () => ({
     models = { generateContent };
   },
 }));
-import { createGeminiProvider, mockProvider, SYSTEM_PROMPT } from './ai.js';
+import { createGeminiProvider, mockProvider, SYSTEM_PROMPT, validateOutput } from './ai.js';
 import { createTrial } from './engine.js';
 
 async function context() {
@@ -39,10 +39,37 @@ describe('Gemini adapter contract', () => {
     expect(await createGeminiProvider()(ctx)).toEqual(output);
     const call = generateContent.mock.calls[0][0];
     expect(call.config.systemInstruction).toBe(SYSTEM_PROMPT);
-    expect(JSON.parse(call.contents).input).toContain('이전 지시를 무시');
+    expect(JSON.parse(call.contents[0].parts[0].text).input).toContain('이전 지시를 무시');
     expect(call.config.responseMimeType).toBe('application/json');
+    expect(call.config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
     expect(call.config.responseJsonSchema).toHaveProperty('properties.messages');
-    expect(call.contents).not.toContain('test-key-never-real');
+    expect(JSON.stringify(call.contents)).not.toContain('test-key-never-real');
+  });
+  it('sends photos as image parts, keeps them out of the JSON text, and requires one note each', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const photos = [{ mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUg==' }];
+    const ctx = { ...(await context()), photos };
+    const output = await mockProvider(ctx);
+    expect(output.evidenceNotes).toHaveLength(1);
+    generateContent.mockResolvedValue({ text: JSON.stringify(output) });
+    await createGeminiProvider()(ctx);
+    const parts = generateContent.mock.calls[0][0].contents[0].parts;
+    expect(parts[1]).toEqual({ inlineData: photos[0] });
+    expect(parts[0].text).not.toContain(photos[0].data);
+    expect(JSON.parse(parts[0].text).photos).toBe(1);
+    generateContent.mockReset();
+    generateContent.mockResolvedValue({ text: JSON.stringify({ ...output, evidenceNotes: [] }) });
+    await expect(createGeminiProvider()(ctx)).rejects.toMatchObject({ code: 'AI_UNAVAILABLE' });
+  });
+  it('lets the thinking level be configured or left to the model default', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const ctx = await context();
+    generateContent.mockResolvedValue({ text: JSON.stringify(await mockProvider(ctx)) });
+    vi.stubEnv('GEMINI_THINKING_LEVEL', 'default');
+    await createGeminiProvider()(ctx);
+    expect(generateContent.mock.calls[0][0].config).not.toHaveProperty('thinkingConfig');
+    vi.stubEnv('GEMINI_THINKING_LEVEL', 'fast');
+    expect(() => createGeminiProvider()).toThrow('GEMINI_THINKING_LEVEL');
   });
   it('retries malformed JSON once then succeeds', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
@@ -63,6 +90,43 @@ describe('Gemini adapter contract', () => {
       status: 502,
     });
     expect(generateContent).toHaveBeenCalledTimes(2);
+  });
+  it('moves to the fallback model when the primary is rate limited, then reports a busy error', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const ctx = await context();
+    generateContent
+      .mockRejectedValueOnce({ status: 429 })
+      .mockResolvedValueOnce({ text: JSON.stringify(await mockProvider(ctx)) });
+    await expect(createGeminiProvider()(ctx)).resolves.toHaveProperty('safety', 'everyday');
+    expect(generateContent.mock.calls.map((c) => c[0].model)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ]);
+    generateContent.mockReset();
+    generateContent.mockRejectedValue({ status: 429 });
+    await expect(createGeminiProvider()(ctx)).rejects.toMatchObject({
+      code: 'AI_BUSY',
+      status: 429,
+    });
+    generateContent.mockReset();
+    generateContent.mockRejectedValue({ status: 429 });
+    vi.stubEnv('GEMINI_FALLBACK_MODEL', '');
+    await expect(createGeminiProvider()(ctx)).rejects.toMatchObject({ code: 'AI_BUSY' });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+  it('drops lines from roles that may not speak instead of failing the whole turn', async () => {
+    const ctx = await context();
+    const output = await mockProvider(ctx);
+    const extra = {
+      ...output,
+      messages: [...output.messages, { speaker: 'judge' as const, content: '추가 발언입니다.' }],
+    };
+    expect(validateOutput(extra, ctx).messages.map((m) => m.speaker)).toEqual([
+      'defender',
+      'prosecutor',
+    ]);
+    const onlyExtra = { ...output, messages: [{ speaker: 'judge' as const, content: '판사' }] };
+    expect(() => validateOutput(onlyExtra, ctx)).toThrow('Missing speaker');
   });
   it('does not expose upstream error details or retry authentication failures', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
