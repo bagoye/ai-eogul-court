@@ -1241,6 +1241,43 @@ label {
   border-radius: 4px;
   white-space: nowrap;
 }
+.heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.voice-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #e0dfd1;
+  border-radius: 5px;
+  background: #fffefa;
+  color: #8a8f80;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.voice-toggle.on {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: #fff;
+}
+.verdict-listen {
+  margin: -14px 0 24px;
+}
+.message-actions {
+  display: flex;
+  gap: 12px;
+}
+.court-message.is-speaking .message-body > p {
+  box-shadow: inset 3px 0 0 var(--gold);
+  padding-left: 10px;
+  transition: padding 0.2s;
+}
 .message-log {
   height: 375px;
   overflow-y: auto;

@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import {
+  Link,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -21,12 +29,16 @@ import {
   ChevronDown,
   AlertCircle,
   BookOpen,
+  Volume2,
+  VolumeX,
+  Square,
 } from 'lucide-react';
-import type { CaseFile, Decision, Mode, Photo, Trial } from '../../shared/types';
+import type { CaseFile, Decision, Message, Mode, Photo, Trial } from '../../shared/types';
 import { DECISIONS, DISCLAIMER, MAX_PHOTOS } from '../../shared/types';
 import { CourtScene, Judge, Prosecutor, Defender } from './characters';
 import { api, APIError, getTrial } from './api';
 import { appendText, MicButton, PhotoPicker } from './media';
+import { canSpeak, useNarrator, useVoicePreference } from './voice';
 
 const names: Record<string, string> = {
   judge: '판사',
@@ -428,7 +440,7 @@ function Intake() {
     try {
       const trial = await api<Trial>('/trials', { ...payload, requestId: pending.current!.id });
       remember(trial.id);
-      navigate(`/trial/${trial.id}`);
+      navigate(`/trial/${trial.id}`, { state: { fresh: true } });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -630,9 +642,25 @@ function TrialPage() {
   const [decision, setDecision] = useState<Decision>();
   const [objection, setObjection] = useState<string>();
   const [record, setRecord] = useState(false);
+  const [decided, setDecided] = useState(false);
+  const [listenSignal, setListenSignal] = useState(0);
   const pending = useRef<{ signature: string; id: string } | null>(null);
   const lock = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const narrator = useNarrator();
+  const [voiceOn, toggleVoice] = useVoicePreference();
+  // Voicebot turn: read the court's new lines aloud, then listen for the user's reply.
+  function narrate(messages: Message[], t: Trial) {
+    if (!voiceOn) return;
+    narrator.speak(
+      messages.filter((m) => m.speaker !== 'user'),
+      () => {
+        if (t.phase === 'questioning') setListenSignal((n) => n + 1);
+      },
+    );
+  }
   async function reload() {
     try {
       setError('');
@@ -650,6 +678,11 @@ function TrialPage() {
         if (!cancelled) {
           setTrial(t);
           remember(t.id);
+          // Only a trial just filed is read aloud; a refresh must not replay it.
+          if ((location.state as { fresh?: boolean } | null)?.fresh) {
+            narrate(t.messages, t);
+            navigate(location.pathname, { replace: true, state: null });
+          }
         }
       })
       .catch((e) => {
@@ -685,6 +718,8 @@ function TrialPage() {
         requestId: pending.current!.id,
       });
       setTrial(next);
+      if (type === 'verdict') setDecided(true);
+      else narrate(next.messages.slice(trial.messages.length), next);
       setInput('');
       setPhotos([]);
       setObjection(undefined);
@@ -742,7 +777,8 @@ function TrialPage() {
         </Link>
       </main>
     );
-  if (trial.phase === 'completed') return <VerdictPage trial={trial} />;
+  if (trial.phase === 'completed')
+    return <VerdictPage trial={trial} autoRead={decided && voiceOn} />;
   const closing = trial.phase === 'closing';
   const aiMessages = trial.messages.filter((m) => m.speaker !== 'user');
   const active = aiMessages.at(-1)?.speaker || 'judge';
@@ -778,7 +814,7 @@ function TrialPage() {
             </span>
             <span>심문 {trial.questionCount} / 3</span>
           </div>
-          <CourtScene compact active={active} mode={trial.mode} />
+          <CourtScene compact active={narrator.speaking?.speaker || active} mode={trial.mode} />
           <div className="seat-info">
             <span>오늘의 {trial.mode === 'judge' ? '판사' : '원고'}</span>
             <strong>
@@ -818,9 +854,25 @@ function TrialPage() {
                     : '양측의 입장을 살펴봅니다.'}
               </h2>
             </div>
-            <span className="question-badge">
-              {closing ? '심문 종료' : `${trial.questionCount} / 3`}
-            </span>
+            <div className="heading-actions">
+              {canSpeak && (
+                <button
+                  type="button"
+                  className={`voice-toggle ${voiceOn ? 'on' : ''}`}
+                  aria-pressed={voiceOn}
+                  onClick={() => {
+                    if (voiceOn) narrator.stop();
+                    toggleVoice();
+                  }}
+                >
+                  {voiceOn ? <Volume2 size={14} /> : <VolumeX size={14} />}
+                  음성 대화 {voiceOn ? '켜짐' : '꺼짐'}
+                </button>
+              )}
+              <span className="question-badge">
+                {closing ? '심문 종료' : `${trial.questionCount} / 3`}
+              </span>
+            </div>
           </div>
           {!closing ? (
             <>
@@ -832,7 +884,10 @@ function TrialPage() {
                 aria-live="polite"
               >
                 {trial.messages.map((m) => (
-                  <article key={m.id} className={`court-message speaker-${m.speaker}`}>
+                  <article
+                    key={m.id}
+                    className={`court-message speaker-${m.speaker} ${narrator.speaking?.id === m.id ? 'is-speaking' : ''}`}
+                  >
                     <div className="message-avatar">
                       {m.speaker === 'defender' || m.speaker === 'defendant' ? (
                         <Defender />
@@ -857,17 +912,35 @@ function TrialPage() {
                         {!!m.photos && <small>사진 {m.photos}장 제출</small>}
                       </div>
                       <p>{m.content}</p>
-                      {m.speaker !== 'user' && m.kind !== 'question' && !hasObjected && (
-                        <button
-                          className="object-button"
-                          disabled={busy}
-                          onClick={() => {
-                            setObjection(m.id);
-                            setInput('');
-                          }}
-                        >
-                          <Hand size={12} /> 이의 있습니다
-                        </button>
+                      {m.speaker !== 'user' && (
+                        <div className="message-actions">
+                          {canSpeak &&
+                            (narrator.speaking?.id === m.id ? (
+                              <button className="object-button" onClick={narrator.stop}>
+                                <Square size={11} /> 멈추기
+                              </button>
+                            ) : (
+                              <button
+                                className="object-button"
+                                onClick={() => narrator.speak([m])}
+                                aria-label={`${names[m.speaker]} 발언 듣기`}
+                              >
+                                <Volume2 size={12} /> 듣기
+                              </button>
+                            ))}
+                          {m.kind !== 'question' && !hasObjected && (
+                            <button
+                              className="object-button"
+                              disabled={busy}
+                              onClick={() => {
+                                setObjection(m.id);
+                                setInput('');
+                              }}
+                            >
+                              <Hand size={12} /> 이의 있습니다
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </article>
@@ -957,6 +1030,8 @@ function TrialPage() {
                   <span className="input-tools">
                     <MicButton
                       disabled={busy}
+                      listenSignal={objection ? 0 : listenSignal}
+                      onStart={narrator.stop}
                       onText={(t) => setInput((v) => appendText(v, t, 3000))}
                       onError={setError}
                     />
@@ -1032,6 +1107,7 @@ function TrialPage() {
                 <div className="input-tools">
                   <MicButton
                     disabled={busy}
+                    onStart={narrator.stop}
                     onText={(t) => setInput((v) => appendText(v, t, 3000))}
                     onError={setError}
                   />
@@ -1109,10 +1185,27 @@ function FactRecord({ trial }: { trial: Trial }) {
   );
 }
 
-function VerdictPage({ trial }: { trial: Trial }) {
+function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boolean }) {
   const [review, setReview] = useState(false);
   const [saved, setSaved] = useState(false);
   const verdict = trial.verdict!;
+  const narrator = useNarrator();
+  const reading = !!narrator.speaking;
+  function readVerdict() {
+    const parts = [
+      `${trial.title}에 대한 판결입니다.`,
+      verdict.title,
+      verdict.result,
+      ...verdict.reasons,
+      `화해 권고. ${verdict.reconciliation}`,
+      verdict.lastWord,
+    ];
+    narrator.speak(parts.map((content, i) => ({ id: `verdict-${i}`, speaker: 'judge', content })));
+  }
+  useEffect(() => {
+    if (autoRead) readVerdict();
+    // Read once when the verdict first appears.
+  }, []);
   function saveSVG() {
     const escape = (s: string) =>
       s.replace(
@@ -1160,6 +1253,16 @@ function VerdictPage({ trial }: { trial: Trial }) {
         {trial.mode === 'judge' ? '판사님의 판결이 내려졌습니다.' : '오늘의 재판을 마칩니다.'}
       </h1>
       <p className="verdict-intro">조금 다른 관점이, 조금 더 나은 대화의 시작이 되길.</p>
+      {canSpeak && (
+        <button
+          type="button"
+          className={`voice-toggle verdict-listen ${reading ? 'on' : ''}`}
+          onClick={reading ? narrator.stop : readVerdict}
+        >
+          {reading ? <Square size={13} /> : <Volume2 size={14} />}
+          {reading ? '읽기 멈추기' : '판결문 듣기'}
+        </button>
+      )}
       <article className="verdict-card">
         <div className="verdict-top">
           <span>AI 억울법정</span>

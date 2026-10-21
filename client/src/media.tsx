@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ImagePlus, Mic, MicOff, X } from 'lucide-react';
 import type { Photo } from '../../shared/types';
 import { MAX_PHOTO_CHARS } from '../../shared/types';
@@ -121,27 +121,24 @@ const SpeechRecognitionAPI = Recognizer.SpeechRecognition || Recognizer.webkitSp
 export function MicButton({
   onText,
   onError,
+  onStart,
+  listenSignal = 0,
   disabled,
 }: {
   onText: (text: string) => void;
   onError: (message: string) => void;
+  onStart?: () => void;
+  /** Increment to start listening without a click, e.g. after the judge asks aloud. */
+  listenSignal?: number;
   disabled?: boolean;
 }) {
   const [listening, setListening] = useState(false);
   const recognition = useRef<Recognition | null>(null);
-  const handlers = useRef({ onText, onError });
-  handlers.current = { onText, onError };
-  useEffect(() => () => recognition.current?.stop(), []);
-  useEffect(() => {
-    if (disabled) recognition.current?.stop();
-  }, [disabled]);
-  if (!SpeechRecognitionAPI) return null;
-  function toggle() {
-    if (listening) {
-      recognition.current?.stop();
-      return;
-    }
-    const r = new SpeechRecognitionAPI!();
+  const handlers = useRef({ onText, onError, onStart });
+  handlers.current = { onText, onError, onStart };
+  const start = useCallback(() => {
+    if (!SpeechRecognitionAPI || recognition.current) return;
+    const r = new SpeechRecognitionAPI();
     r.lang = 'ko-KR';
     r.continuous = true;
     r.interimResults = false;
@@ -166,11 +163,27 @@ export function MicButton({
     };
     recognition.current = r;
     try {
+      // Stop any narration first so the court's own voice is not transcribed.
+      handlers.current.onStart?.();
       r.start();
       setListening(true);
     } catch {
+      recognition.current = null;
       handlers.current.onError('음성 입력을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.');
     }
+  }, []);
+  useEffect(() => () => recognition.current?.stop(), []);
+  useEffect(() => {
+    if (disabled) recognition.current?.stop();
+  }, [disabled]);
+  useEffect(() => {
+    if (listenSignal > 0 && !disabled) start();
+    // Only a new signal starts listening; re-enabling the button must not.
+  }, [listenSignal]);
+  if (!SpeechRecognitionAPI) return null;
+  function toggle() {
+    if (listening) recognition.current?.stop();
+    else start();
   }
   return (
     <button
