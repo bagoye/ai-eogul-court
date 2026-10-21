@@ -1,7 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { z } from 'zod';
@@ -45,6 +45,8 @@ export function createApp(
       },
     }),
   );
+  // Trial writes may carry up to three downsized photos; everything else stays small.
+  app.use('/api/trials', express.json({ limit: '5mb' }));
   app.use(express.json({ limit: '32kb' }));
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -134,7 +136,7 @@ export function createApp(
     work: () => Promise<Trial>,
   ) {
     const key = `${owner}:${requestId}`;
-    const fingerprint = JSON.stringify(payload);
+    const fingerprint = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     const saved = completed.get(key);
     if (saved) {
       if (saved.fingerprint !== fingerprint)
@@ -222,7 +224,10 @@ export function createApp(
         });
       if ((err as { type?: string }).type === 'entity.too.large')
         return res.status(413).json({
-          error: { code: 'TOO_LARGE', message: '입력이 너무 깁니다. 내용을 줄여 주세요.' },
+          error: {
+            code: 'TOO_LARGE',
+            message: '입력이 너무 큽니다. 내용을 줄이거나 사진 수를 줄여 주세요.',
+          },
         });
       if (err instanceof SyntaxError)
         return res

@@ -1366,6 +1366,81 @@ label {
   min-height: 37px;
   font-size: 11px;
 }
+.input-tools {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -10px 0 8px;
+}
+.input-actions .input-tools {
+  align-items: center;
+  margin: 0;
+}
+.tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #e0dfd1;
+  border-radius: 5px;
+  background: #fffefa;
+  color: #737f68;
+  font-size: 10px;
+  cursor: pointer;
+}
+.tool-button:hover {
+  background: #e9eddf;
+}
+.tool-button:focus-within {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.tool-button.disabled,
+.tool-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tool-button.listening {
+  border-color: var(--burgundy);
+  background: #f7e9e2;
+  color: var(--burgundy);
+}
+.photo-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hearing-input .photo-picker {
+  margin-top: 8px;
+}
+.photo-thumb {
+  position: relative;
+  width: 46px;
+  height: 46px;
+}
+.photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+}
+.photo-thumb button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  border: 2px solid #fffefa;
+}
 .target-picker {
   display: flex;
   align-items: center;

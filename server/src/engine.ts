@@ -1,17 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { Trial, Message } from '../../shared/types.js';
-import { DECISIONS } from '../../shared/types.js';
+import type { Trial, Message, Photo } from '../../shared/types.js';
+import { DECISIONS, IMAGE_TYPES, MAX_PHOTOS, MAX_PHOTO_CHARS } from '../../shared/types.js';
 import { CASES } from '../../shared/cases.js';
 import { type Provider, type AIContext, validateOutput } from './ai.js';
 import { AppError } from './errors.js';
 
+// Shape only. Content checks live in checkPhotos so users get a specific message.
+const photosSchema = z
+  .array(z.object({ mimeType: z.string(), data: z.string() }))
+  .max(10)
+  .default([]);
 export const intakeSchema = z.object({
   requestId: z.string().uuid(),
   mode: z.enum(['plaintiff', 'judge']),
   title: z.string().trim().max(65).default(''),
   summary: z.string().trim().max(5000).default(''),
   caseId: z.string().max(50).optional(),
+  photos: photosSchema,
 });
 export const actionSchema = z.object({
   requestId: z.string().uuid(),
@@ -21,6 +27,7 @@ export const actionSchema = z.object({
   target: z.enum(['plaintiff', 'defendant']).optional(),
   messageId: z.string().uuid().optional(),
   decision: z.enum(DECISIONS).optional(),
+  photos: photosSchema,
 });
 export type Action = z.infer<typeof actionSchema>;
 export const seriousText = (value: string) =>
@@ -32,6 +39,39 @@ const message = (
   content: string,
   kind?: Message['kind'],
 ): Message => ({ id: randomUUID(), speaker, content, ...(kind ? { kind } : {}) });
+const signatures: Record<Photo['mimeType'], (b: Buffer) => boolean> = {
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': (b) => b.subarray(0, 4).toString('hex') === '89504e47',
+  'image/webp': (b) =>
+    b.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    b.subarray(8, 12).toString('latin1') === 'WEBP',
+};
+function checkPhotos(photos: { mimeType: string; data: string }[] = [], trial: Trial): Photo[] {
+  if (!photos.length) return [];
+  if (trial.mode !== 'plaintiff')
+    throw new AppError(400, 'PHOTO_NOT_ALLOWED', '사진 증거는 원고 모드에서만 제출할 수 있습니다.');
+  if (trial.evidence.length + photos.length > MAX_PHOTOS)
+    throw new AppError(
+      400,
+      'PHOTO_LIMIT',
+      `사진 증거는 재판당 최대 ${MAX_PHOTOS}장까지 제출할 수 있습니다.`,
+    );
+  for (const p of photos) {
+    const type = IMAGE_TYPES.find((t) => t === p.mimeType);
+    if (
+      !type ||
+      p.data.length > MAX_PHOTO_CHARS ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(p.data) ||
+      !signatures[type](Buffer.from(p.data.slice(0, 16), 'base64'))
+    )
+      throw new AppError(
+        400,
+        'INVALID_PHOTO',
+        '사진을 읽지 못했습니다. JPG·PNG·WEBP 사진을 다시 선택해 주세요.',
+      );
+  }
+  return photos as Photo[];
+}
 const unique = (items: string[]) => [...new Set(items)].slice(0, 20);
 const normalized = (s: string) => s.replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
 
@@ -48,6 +88,9 @@ async function generate(
     trial.phase = 'safety';
     return;
   }
+  trial.evidence.push(
+    ...output.evidenceNotes.map((note, i) => `사진 ${trial.evidence.length + i + 1}: ${note}`),
+  );
   trial.messages.push(...output.messages.map((m) => message(m.speaker, m.content)));
   trial.unresolvedIssues = unique([...trial.unresolvedIssues, ...output.unresolvedIssues]);
   trial.contradictions = unique([...trial.contradictions, ...output.contradictions]);
@@ -128,11 +171,12 @@ export async function createTrial(
     evidence: [],
     aiMode,
   };
+  const photos = checkPhotos(data.photos, trial);
   if (seriousText(data.summary + data.title)) {
     trial.phase = 'safety';
     return trial;
   }
-  await generate(trial, provider, 'opening', trial.summary);
+  await generate(trial, provider, 'opening', trial.summary, { photos });
   return trial;
 }
 
@@ -147,6 +191,8 @@ export async function advance(original: Trial, action: Action, provider: Provide
   const trial = structuredClone(original);
   if (trial.phase === 'completed' || trial.phase === 'safety')
     throw new AppError(409, 'TRIAL_ENDED', '이미 종료된 재판입니다.');
+  if (action.photos?.length && action.type !== 'answer')
+    throw new AppError(400, 'PHOTO_NOT_ALLOWED', '사진은 판사의 질문에 답할 때 첨부해 주세요.');
   if (action.type === 'end') {
     if (trial.phase !== 'questioning')
       throw new AppError(409, 'WRONG_PHASE', '심문 단계에서만 종료할 수 있습니다.');
@@ -173,6 +219,7 @@ export async function advance(original: Trial, action: Action, provider: Provide
       throw new AppError(400, 'TARGET_REQUIRED', '질문할 당사자를 선택해 주세요.');
     if (trial.mode === 'judge' && trial.questionCount >= 3)
       throw new AppError(409, 'QUESTION_LIMIT', '심문은 최대 3회입니다.');
+    const photos = checkPhotos(action.photos, trial);
     let objectionTo: string | undefined;
     if (action.type === 'objection') {
       const selected = trial.messages.find(
@@ -203,14 +250,16 @@ export async function advance(original: Trial, action: Action, provider: Provide
         source: 'plaintiff',
       });
     }
-    trial.messages.push(
-      message('user', action.input, action.type === 'objection' ? 'objection' : undefined),
-    );
+    trial.messages.push({
+      ...message('user', action.input, action.type === 'objection' ? 'objection' : undefined),
+      ...(photos.length ? { photos: photos.length } : {}),
+    });
     if (seriousText(action.input)) trial.phase = 'safety';
     else
       await generate(trial, provider, action.type, action.input, {
         target: action.target,
         objectionTo,
+        photos,
       });
   }
   trial.version++;

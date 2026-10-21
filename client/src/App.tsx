@@ -22,10 +22,11 @@ import {
   AlertCircle,
   BookOpen,
 } from 'lucide-react';
-import type { CaseFile, Decision, Mode, Trial } from '../../shared/types';
-import { DECISIONS, DISCLAIMER } from '../../shared/types';
+import type { CaseFile, Decision, Mode, Photo, Trial } from '../../shared/types';
+import { DECISIONS, DISCLAIMER, MAX_PHOTOS } from '../../shared/types';
 import { CourtScene, Judge, Prosecutor, Defender } from './characters';
 import { api, APIError, getTrial } from './api';
+import { appendText, MicButton, PhotoPicker } from './media';
 
 const names: Record<string, string> = {
   judge: '판사',
@@ -387,6 +388,7 @@ function Intake() {
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [cases, setCases] = useState<CaseFile[]>([]);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
@@ -413,7 +415,13 @@ function Intake() {
     lock.current = true;
     setBusy(true);
     setError('');
-    const payload = { mode, title, summary, caseId: selected || undefined };
+    const payload = {
+      mode,
+      title,
+      summary,
+      caseId: selected || undefined,
+      photos: mode === 'plaintiff' ? photos : [],
+    };
     const signature = JSON.stringify(payload);
     if (pending.current?.signature !== signature)
       pending.current = { signature, id: crypto.randomUUID() };
@@ -516,6 +524,24 @@ function Intake() {
                 <span>최소 20자</span>
                 <span>{summary.length.toLocaleString()} / 5,000</span>
               </div>
+              <div className="input-tools">
+                <MicButton
+                  disabled={busy}
+                  onText={(t) => setSummary((v) => appendText(v, t, 5000))}
+                  onError={setError}
+                />
+                <PhotoPicker
+                  photos={photos}
+                  onChange={setPhotos}
+                  remaining={MAX_PHOTOS}
+                  disabled={busy}
+                  onError={setError}
+                />
+              </div>
+              <p className="field-hint">
+                사진은 AI 분석에만 쓰고 서버에 보관하지 않아요. 위치정보는 지워서 보내요. 얼굴·이름·
+                연락처가 보이는 사진은 피해 주세요.
+              </p>
               <div className="examples">
                 <span>이런 사연은 어때요?</span>
                 <div>
@@ -599,6 +625,7 @@ function TrialPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [target, setTarget] = useState<'plaintiff' | 'defendant'>('plaintiff');
   const [decision, setDecision] = useState<Decision>();
   const [objection, setObjection] = useState<string>();
@@ -647,6 +674,7 @@ function TrialPage() {
       target,
       decision,
       messageId: objection,
+      photos: type === 'answer' && trial.mode === 'plaintiff' ? photos : [],
     };
     const signature = JSON.stringify(payload);
     if (pending.current?.signature !== signature)
@@ -658,6 +686,7 @@ function TrialPage() {
       });
       setTrial(next);
       setInput('');
+      setPhotos([]);
       setObjection(undefined);
       pending.current = null;
     } catch (err) {
@@ -825,6 +854,7 @@ function TrialPage() {
                         {m.speaker !== 'user' && <span>AI</span>}
                         {m.kind === 'question' && <small>심문 질문</small>}
                         {m.kind === 'objection' && <small>이의 제기</small>}
+                        {!!m.photos && <small>사진 {m.photos}장 제출</small>}
                       </div>
                       <p>{m.content}</p>
                       {m.speaker !== 'user' && m.kind !== 'question' && !hasObjected && (
@@ -914,8 +944,24 @@ function TrialPage() {
                   rows={3}
                   required
                 />
+                {trial.mode === 'plaintiff' && !objection && (
+                  <PhotoPicker
+                    photos={photos}
+                    onChange={setPhotos}
+                    remaining={MAX_PHOTOS - trial.evidence.length}
+                    disabled={busy}
+                    onError={setError}
+                  />
+                )}
                 <div className="input-actions">
-                  <span>{input.length.toLocaleString()} / 3,000</span>
+                  <span className="input-tools">
+                    <MicButton
+                      disabled={busy}
+                      onText={(t) => setInput((v) => appendText(v, t, 3000))}
+                      onError={setError}
+                    />
+                    {input.length.toLocaleString()} / 3,000
+                  </span>
                   <Button type="submit" disabled={busy || !input.trim()}>
                     {busy ? (
                       <LoaderCircle size={17} className="spin" />
@@ -983,6 +1029,13 @@ function TrialPage() {
                   <span>이후에는 추가 심문 없이 판결합니다.</span>
                   <span>{input.length} / 3,000</span>
                 </div>
+                <div className="input-tools">
+                  <MicButton
+                    disabled={busy}
+                    onText={(t) => setInput((v) => appendText(v, t, 3000))}
+                    onError={setError}
+                  />
+                </div>
                 <Button type="submit" disabled={busy || (trial.mode === 'judge' && !decision)}>
                   {busy ? (
                     <>
@@ -1025,6 +1078,9 @@ function FactRecord({ trial }: { trial: Trial }) {
     { title: '다투는 쟁점', items: trial.disputedClaims },
     { title: '미확인 정보', items: trial.unresolvedIssues },
     { title: '진술 간 모순', items: trial.contradictions },
+    ...(trial.mode === 'plaintiff'
+      ? [{ title: '사진 증거 · AI 관찰 (진위 미확인)', items: trial.evidence }]
+      : []),
   ];
   return (
     <div className="fact-record">

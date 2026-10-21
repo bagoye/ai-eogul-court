@@ -8,6 +8,15 @@ export interface Message {
   speaker: Speaker;
   content: string;
   kind?: 'question' | 'objection';
+  photos?: number;
+}
+export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export const MAX_PHOTOS = 3;
+// Base64 length per photo. The client downsizes before upload.
+export const MAX_PHOTO_CHARS = 1_400_000;
+export interface Photo {
+  mimeType: (typeof IMAGE_TYPES)[number];
+  data: string;
 }
 export interface Fact {
   id: string;
