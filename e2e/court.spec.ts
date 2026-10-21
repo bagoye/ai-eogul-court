@@ -131,6 +131,8 @@ test('photo evidence and voice input reach the record', async ({ page }) => {
       SpeechRecognition: FakeRecognition,
       webkitSpeechRecognition: FakeRecognition,
     });
+    // Keep this scenario about photos and manual dictation, not the voicebot loop.
+    localStorage.setItem('court-voice', 'off');
   });
   await page.goto('/intake/plaintiff');
   await page.getByRole('button', { name: /사라진 마지막 치킨/ }).click();
@@ -154,4 +156,66 @@ test('photo evidence and voice input reach the record', async ({ page }) => {
   await expect(page.getByText(/1장 남음/)).toBeVisible();
   await page.getByRole('button', { name: /사건 기록 보기/ }).click();
   await expect(page.getByText(/^사진 2: /)).toBeVisible();
+});
+
+test('voicebot reads the court aloud, listens after the judge asks, and reads the verdict', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { spoken: string[] };
+    w.spoken = [];
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: {
+        speak(u: SpeechSynthesisUtterance) {
+          w.spoken.push(u.text);
+          setTimeout(() => {
+            u.onstart?.(new Event('start') as SpeechSynthesisEvent);
+            u.onend?.(new Event('end') as SpeechSynthesisEvent);
+          }, 5);
+        },
+        cancel() {},
+        getVoices: () => [],
+      },
+    });
+    class FakeRecognition {
+      onresult: ((e: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      start() {
+        setTimeout(() => {
+          const result = Object.assign([{ transcript: '따로 정한 약속은 없었어요' }], {
+            isFinal: true,
+          });
+          this.onresult?.({ resultIndex: 0, results: [result] });
+          this.onend?.();
+        }, 20);
+      }
+      stop() {
+        this.onend?.();
+      }
+    }
+    Object.assign(window, {
+      SpeechRecognition: FakeRecognition,
+      webkitSpeechRecognition: FakeRecognition,
+    });
+  });
+  const spoken = () => page.evaluate(() => (window as unknown as { spoken: string[] }).spoken);
+  await page.goto('/intake/plaintiff');
+  await page.getByRole('button', { name: /사라진 마지막 치킨/ }).click();
+  await page.getByRole('button', { name: '재판 시작하기' }).click();
+  await expect(page.getByRole('button', { name: /음성 대화 켜짐/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect.poll(async () => (await spoken()).join(' ')).toContain('합의한 규칙');
+  // The judge's question was read aloud, so the mic opened on its own.
+  await expect(page.getByLabel('질문에 대한 진술')).toHaveValue('따로 정한 약속은 없었어요');
+  await page.getByRole('button', { name: '진술하기' }).click();
+  await expect(page.getByText('2 / 3', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '검사 발언 듣기' }).first().click();
+  await page.getByRole('button', { name: /심문 종료하기/ }).click();
+  await page.getByRole('button', { name: '최후 진술 생략하고 판결받기' }).click();
+  await expect(page.getByRole('heading', { name: '오늘의 재판을 마칩니다.' })).toBeVisible();
+  await expect.poll(async () => (await spoken()).join(' ')).toContain('에 대한 판결입니다');
+  await expect(page.getByRole('button', { name: '판결문 듣기' })).toBeVisible();
 });

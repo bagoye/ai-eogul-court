@@ -6,16 +6,16 @@
 
 `npm run smoke`도 통과했습니다. 빌드된 Express 서버에서 홈페이지·JavaScript 자산·SPA 직접 진입·API 상태·보안 헤더·API 404 응답을 확인하고 서버를 종료합니다.
 
-| 검사                           | 결과       | 의미                                                  |
-| ------------------------------ | ---------- | ----------------------------------------------------- |
-| `npm run build`                | 통과       | Vite 정적 빌드와 Express TypeScript 빌드              |
-| `npm run typecheck`            | 통과       | 클라이언트·서버 타입 검사                             |
-| `npm run lint`                 | 통과       | ESLint                                                |
-| `npm test`                     | 30개 통과  | 상태 머신 12, HTTP API 10, Gemini 어댑터 계약 8       |
-| `npm run test:e2e`             | 14개 통과  | 7개 시나리오 × 데스크톱·모바일 Chromium               |
-| 설치 시 npm audit              | 취약점 0개 | 기존 테스트 도구를 수정된 버전으로 업데이트한 후 결과 |
-| 실제 Gemini 플레이             | 미검증     | API 키 미제공                                         |
-| 실제 iOS Safari / Android 기기 | 미검증     | 모바일은 Chromium 기기 에뮬레이션                     |
+| 검사                           | 결과       | 의미                                                         |
+| ------------------------------ | ---------- | ------------------------------------------------------------ |
+| `npm run build`                | 통과       | Vite 정적 빌드와 Express TypeScript 빌드                     |
+| `npm run typecheck`            | 통과       | 클라이언트·서버 타입 검사                                    |
+| `npm run lint`                 | 통과       | ESLint                                                       |
+| `npm test`                     | 33개 통과  | 상태 머신 12, HTTP API 10, Gemini 어댑터 계약 8, 음성 배정 3 |
+| `npm run test:e2e`             | 14개 통과  | 7개 시나리오 × 데스크톱·모바일 Chromium                      |
+| 설치 시 npm audit              | 취약점 0개 | 기존 테스트 도구를 수정된 버전으로 업데이트한 후 결과        |
+| 실제 Gemini 플레이             | 미검증     | API 키 미제공                                                |
+| 실제 iOS Safari / Android 기기 | 미검증     | 모바일은 Chromium 기기 에뮬레이션                            |
 
 ## 요청 시나리오 대응
 
