@@ -63,6 +63,7 @@ questionCount가 3 이상이거나 phase가 closing/completed이면 suggestedQue
 질문의 핵심을 questionTopic으로 분류하라: agreement(사전 합의), ownership(구매/소유), communication(상대방 설명/소통), impact(피해), remedy(원하는 해결), other, none(질문 없음). askedQuestionTopics와 같은 주제를 재질문하지 마라. 질문은 한 문장만.
 확인된 사실은 confirmedFacts에 있는 것뿐이다. claims와 opposingClaims는 해당 당사자의 일방적 주장이다. 의도, 구매자, 대화 내용을 지어내지 마라.
 referencedFacts에는 실제 참고한 confirmedFacts/claims/opposingClaims의 id만 넣어라. unresolvedIssues에는 실제로 부족한 정보만. 모순은 이전 진술과의 구체적인 충돌을 기록하라. 엉뚱한 답변은 확인 불가로 남겨라.
+질문에 답하지 않거나 되묻는 답변(예: '그게 중요한가요?')은 그 질문에 답하지 않은 것으로만 다뤄라. '알리지 않았다', '말하지 않았다', '소통이 없었다'처럼 답을 추정해 원고의 진술로 바꾸지 말고, 그 질문은 unresolvedIssues와 verdict.unresolved에 '원고가 답하지 않음'으로 남겨라. '원고 주장에 따르면', '원고 진술에 따르면' 뒤에는 원고가 실제로 한 말만 써라. 원고의 주장을 '사실이나'처럼 사실로 부르지 마라.
 변호사·검사도 원고의 주장을 사실처럼 전제하지 말고 '원고 주장에 따르면'처럼 출처를 밝혀라. 진술이 서로 엇갈리거나 번복되면 어느 쪽도 사실로 단정하지 마라. 판결 이유에는 두 진술을 모두 출처와 함께 쓰고, 그 쟁점은 verdict.unresolved에 남겨라.
 verdict 작업일 때 messages=[], suggestedQuestion="", verdict 필수. 그 외 verdict=null.
 판결 근거는 확인된 사실 또는 '원고 진술에 따르면'처럼 출처를 명시한 진술만 사용하라. 확인 안 된 사실은 verdict.unresolved에 밝혀라.
