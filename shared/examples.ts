@@ -1,8 +1,9 @@
 import type { Trial } from './types.js';
 import { CASES } from './cases.js';
 
-// Real Gemini output saved during the docs/AI_EVALUATION.md run on 2026-10-22
-// (models gemini-3.8-flash / gemini-3.5-flash-lite; most answers came from the fallback).
+// Real Gemini output saved during the docs/AI_EVALUATION.md runs on 2026-10-22.
+// Plaintiff: final configuration (gemini-3.5-flash-lite). Judge: first run
+// (gemini-3.8-flash / gemini-3.5-flash-lite); the result is the user's choice either way.
 // Shown when visitors want to see a full trial without spending AI quota.
 // Keep the dialogue and verdict text verbatim: the page labels them as real AI responses.
 const chicken = CASES.find((c) => c.id === 'chicken')!;
@@ -16,24 +17,24 @@ export const EXAMPLE_TRIALS: Trial[] = [
     title: '남은 치킨 실종 사건',
     summary:
       '어제 저녁에 시킨 치킨이 한 조각 남아서 냉장고에 넣어 뒀는데, 아침에 보니 동생이 먹어 버렸습니다. 저는 제가 먹으려고 남겨 둔 거라고 생각했어요.',
-    createdAt: '2026-10-22T00:04:03.066Z',
+    createdAt: '2026-10-22T02:30:32.909Z',
     messages: [
       {
         id: 'example-plaintiff-1',
         speaker: 'defender',
         content:
-          '원고가 치킨을 남겨 둔 것은 사실이나, 명시적으로 본인의 것이라고 표시하거나 남겨 두었다는 말을 한 적이 없습니다.',
+          '원고 주장에 따르면 남겨둔 치킨 한 조각을 동생이 먹었다고 하나, 이에 대한 동생의 입장은 아직 확인되지 않았습니다.',
       },
       {
         id: 'example-plaintiff-2',
         speaker: 'prosecutor',
         content:
-          '동생이 냉장고의 남은 음식을 먹기 전에 원고에게 확인을 거치지 않은 점은 명백한 소통 부족입니다.',
+          '원고가 먹으려고 남겨 둔 것이라는 주장은 일방적이며, 냉장고에 보관된 음식에 대한 명확한 사전 합의가 있었는지 증거가 부족합니다.',
       },
       {
         id: 'example-plaintiff-3',
         speaker: 'judge',
-        content: '치킨을 냉장고에 넣을 때 동생에게 따로 남겨둔 것이라고 말씀하셨나요?',
+        content: '냉장고에 남겨둔 치킨을 드시겠다고 동생에게 미리 말씀하셨나요?',
         kind: 'question',
       },
       {
@@ -45,23 +46,72 @@ export const EXAMPLE_TRIALS: Trial[] = [
         id: 'example-plaintiff-5',
         speaker: 'defender',
         content:
-          '사전 약속이나 표시가 없었으므로 피고가 냉장고의 남은 음식을 먹은 것을 고의적인 침해로 보기 어렵습니다.',
+          '원고 주장에 따르면 별도의 약속은 없었으나 평소 남은 음식을 주로 먹었다고 하나, 이는 원고의 일방적 주장입니다.',
       },
       {
         id: 'example-plaintiff-6',
         speaker: 'prosecutor',
         content:
-          '공동으로 사용하는 냉장고의 음식이라도 상대방의 식습관 패턴을 고려했다면 최소한의 확인이 필요했습니다.',
+          '사전 약속이나 명시적인 소유 표시가 없었다면 상대방이 이를 인지하기 어려웠을 수 있습니다.',
       },
       {
         id: 'example-plaintiff-7',
+        speaker: 'judge',
+        content: '그 뒤 동생분과 이 일에 대해 어떤 이야기를 나누셨나요?',
+        kind: 'question',
+      },
+      {
+        id: 'example-plaintiff-8',
+        speaker: 'user',
+        content: '동생은 아무 말도 안 했어요.',
+      },
+      {
+        id: 'example-plaintiff-9',
+        speaker: 'defender',
+        content:
+          '원고 주장에 따르면 동생과 이 일에 대해 아무 말을 나누지 않았다고 하나, 상대방의 정확한 입장은 여전히 확인되지 않았습니다.',
+      },
+      {
+        id: 'example-plaintiff-10',
+        speaker: 'prosecutor',
+        content: '상대방과 대화나 소통이 없었다면 상대방이 원고의 의도를 알기 어려웠을 것입니다.',
+      },
+      {
+        id: 'example-plaintiff-11',
+        speaker: 'judge',
+        content: '이번 일로 어떤 점이 가장 속상하셨나요?',
+        kind: 'question',
+      },
+      {
+        id: 'example-plaintiff-12',
+        speaker: 'user',
+        content: '다음부터는 먹기 전에 물어봐 줬으면 해요.',
+      },
+      {
+        id: 'example-plaintiff-13',
+        speaker: 'defender',
+        content:
+          '원고 주장에 따르면 다음부터는 먹기 전에 물어봐 주기를 바란다고 하나, 상대방의 입장은 아직 확인되지 않았습니다.',
+      },
+      {
+        id: 'example-plaintiff-14',
+        speaker: 'prosecutor',
+        content:
+          '원고가 바라는 해결책이 제시되었으나, 사전 약속 부재 속에서 상대방에게만 책임을 묻기는 어렵습니다.',
+      },
+      {
+        id: 'example-plaintiff-15',
         speaker: 'user',
         content: '서운했지만 화해하고 싶어요.',
       },
     ],
-    questionCount: 1,
-    askedQuestions: ['치킨을 냉장고에 넣을 때 동생에게 따로 남겨둔 것이라고 말씀하셨나요?'],
-    askedQuestionTopics: [],
+    questionCount: 3,
+    askedQuestions: [
+      '냉장고에 남겨둔 치킨을 드시겠다고 동생에게 미리 말씀하셨나요?',
+      '그 뒤 동생분과 이 일에 대해 어떤 이야기를 나누셨나요?',
+      '이번 일로 어떤 점이 가장 속상하셨나요?',
+    ],
+    askedQuestionTopics: ['agreement', 'communication', 'impact'],
     confirmedFacts: [],
     claims: [
       {
@@ -75,6 +125,16 @@ export const EXAMPLE_TRIALS: Trial[] = [
         source: 'plaintiff',
       },
       {
+        id: 'claim-2',
+        text: '동생은 아무 말도 안 했어요.',
+        source: 'plaintiff',
+      },
+      {
+        id: 'claim-3',
+        text: '다음부터는 먹기 전에 물어봐 줬으면 해요.',
+        source: 'plaintiff',
+      },
+      {
         id: 'claim-final',
         text: '서운했지만 화해하고 싶어요.',
         source: 'plaintiff',
@@ -82,29 +142,21 @@ export const EXAMPLE_TRIALS: Trial[] = [
     ],
     opposingClaims: [],
     disputedClaims: ['원고의 진술에 대한 상대방의 확인이 없습니다.'],
-    unresolvedIssues: [
-      '상대방 진술 및 의도 미확인',
-      '동생이 치킨을 먹을 당시 원고의 메모나 사전 고지가 있었는지 여부',
-      '피고의 입장 및 당시 상황에 대한 진술 미확인',
-    ],
+    unresolvedIssues: ['상대방 진술 및 의도 미확인', '치킨 보관 및 취식에 대한 사전 합의 여부'],
     contradictions: [],
     evidence: [],
     finalStatement: '서운했지만 화해하고 싶어요.',
     verdict: {
       title: '남은 치킨 실종 사건 판결',
-      result: '원고 일부 승소 및 화해 권고',
+      result: '판단 유보',
       reasons: [
-        '원고 진술에 따르면 냉장고에 남겨둔 치킨을 동생이 먹었으나, 사전 합의나 명시적 표시는 없었음.',
-        '공동 냉장고의 음식이라도 소통 부족으로 인한 오해의 소지가 있음.',
+        '원고 주장에 따르면 냉장고에 남겨둔 치킨을 동생이 먹었으나 별도의 사전 약속은 없었다.',
+        '상대방의 입장이 확인되지 않아 일방의 주장만으로 책임을 단정하기 어렵다.',
       ],
-      unresolved: [
-        '상대방 진술 및 의도 미확인',
-        '동생이 치킨을 먹을 당시 원고의 메모나 사전 고지가 있었는지 여부',
-        '피고의 입장 및 당시 상황에 대한 진술 미확인',
-        '피고의 정확한 변명이나 당시 상황은 확인되지 않음.',
-      ],
-      reconciliation: '다음에는 냉장고에 남은 음식에 포스트잇으로 이름을 써두기로 합의하세요.',
-      lastWord: '사소한 치킨 한 조각으로 상한 마음을 풀고 사이좋게 지내시길 바랍니다.',
+      unresolved: ['상대방 진술 및 의도 미확인', '치킨 보관 및 취식에 대한 사전 합의 여부'],
+      reconciliation:
+        '앞으로는 냉장고에 남은 음식에 이름을 적어두거나 간단히 메모를 남겨 서로의 몫을 존중해 보세요.',
+      lastWord: '서운한 마음은 이해하지만, 확실한 소통을 통해 오해를 줄여나가길 바랍니다.',
     },
     aiMode: 'gemini',
   } as Trial,

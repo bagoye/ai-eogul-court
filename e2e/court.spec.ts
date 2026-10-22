@@ -107,6 +107,40 @@ test('F: connection errors preserve the story and can be retried', async ({ page
   await expect(page.getByRole('link', { name: /예시 재판 보기/ })).toHaveCount(0);
 });
 
+test('1: the real-model mode shows no development mock banner', async ({ page }) => {
+  await page.route('**/api/health', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, aiMode: 'gemini', configured: true, store: 'redis' }),
+    }),
+  );
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('이 정도 일로');
+  await expect(page.getByText('개발용 체험 모드')).toHaveCount(0);
+});
+
+test('8: going offline mid-answer keeps the answer, the budget, and retries cleanly', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/intake/plaintiff');
+  await page.getByRole('button', { name: /사라진 마지막 치킨/ }).click();
+  await page.getByRole('button', { name: '재판 시작하기' }).click();
+  await expect(page.getByText('1 / 3', { exact: true })).toBeVisible();
+  const answer = '따로 정한 약속은 없었어요.';
+  await page.getByLabel('질문에 대한 진술').fill(answer);
+  await context.setOffline(true);
+  await page.getByRole('button', { name: '진술하기' }).click();
+  await expect(page.getByRole('alert')).toContainText('서버에 연결하지 못했습니다');
+  await expect(page.getByLabel('질문에 대한 진술')).toHaveValue(answer);
+  await expect(page.getByText('1 / 3', { exact: true })).toBeVisible();
+  await context.setOffline(false);
+  await page.getByRole('button', { name: '진술하기' }).click();
+  await expect(page.getByText('2 / 3', { exact: true })).toBeVisible();
+  // The answer was recorded once, not twice.
+  await expect(page.getByText(answer, { exact: true })).toHaveCount(1);
+});
+
 test('recorded example trials are reachable from home and from an AI busy error', async ({
   page,
 }, testInfo) => {
@@ -114,7 +148,7 @@ test('recorded example trials are reachable from home and from an AI busy error'
   await page.getByRole('link', { name: /예시 재판 먼저 보기/ }).click();
   await expect(page).toHaveURL(/\/example\/plaintiff$/);
   await expect(page.getByRole('note')).toContainText('실제 Gemini가 생성한 응답을 그대로 저장한');
-  await expect(page.getByText('원고 일부 승소 및 화해 권고')).toBeVisible();
+  await expect(page.locator('.verdict-result')).toHaveText('판단 유보');
   // The transcript is open so the whole hearing is visible, and the shareable image is hidden.
   await expect(page.getByText('서운했지만 화해하고 싶어요.').first()).toBeVisible();
   await expect(page.getByRole('button', { name: /판결문 이미지 저장/ })).toHaveCount(0);
