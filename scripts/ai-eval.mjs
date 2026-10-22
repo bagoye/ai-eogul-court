@@ -157,6 +157,9 @@ const items = {
       t = await must(c, 2, t, { type: 'answer', input: '그게 중요한가요?' });
       t = await finish(c, 2, t);
       const later = afterUser(t, '그게 중요한가요?') + verdictText(t);
+      const unresolved = [...t.unresolvedIssues, ...(t.verdict?.unresolved || [])].join(' ');
+      // The judge rarely asks who bought it, so the buyer checks only apply when it does.
+      const buyerAsked = /구매|샀|사 온|산 사람|계산|주문/.test(question || '');
       record(
         2,
         run,
@@ -168,8 +171,14 @@ const items = {
             !/(원고|동생|피고|형|언니|누나|오빠|본인)[이가은는]\s*(직접\s*)?(샀|산\s|구매했|주문했|계산했)/.test(
               later,
             ),
-          buyerUnresolved: /구매|샀|산 사람|주문|계산|비용|돈/.test(
-            [...t.unresolvedIssues, ...(t.verdict?.unresolved || [])].join(' '),
+          buyerUnresolved: !buyerAsked || /구매|샀|산 사람|주문|계산|비용|돈/.test(unresolved),
+          // Heuristic: the evasive reply turned into "원고는 알리지 않았다".
+          noInferredAnswer:
+            !/(알리지|말하지|말을 하지|전달하지|소통하지|이야기하지)\s*않|소통이 없었|말한 적이 없/.test(
+              later,
+            ),
+          unansweredKept: /답하지 않|답변하지 않|답변을 하지|확인되지 않|미확인|불분명/.test(
+            unresolved,
           ),
         },
         t,
