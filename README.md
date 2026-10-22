@@ -18,7 +18,7 @@
 - 음성 입력·출력은 브라우저 Web Speech API(인식·합성)를 사용해 별도 AI 비용이 없습니다. 지원 브라우저(Chrome, Edge, Safari)에서만 버튼이 보이며, 음성 인식은 브라우저의 음성 인식 서비스에서 처리됩니다. 목소리 품질은 기기에 설치된 음성에 따라 다릅니다.
 - 판결문은 개인정보 확인 후 SVG 이미지로 다운로드할 수 있습니다. PNG 내보내기는 후속 범위입니다.
 
-**현재 확인된 범위:** 프로덕션 빌드, TypeScript, ESLint, 서버/SDK 계약·음성 배정 테스트 33개, 데스크톱·모바일 Chromium E2E 14개 통과. E2E의 음성 입력·출력은 가짜 음성 인식·합성 객체로 흐름만 검증했으며 실제 마이크 인식과 음성 품질은 확인하지 않았습니다. E2E는 명시적인 개발용 목업으로 진행했습니다. 실제 Gemini 모델의 대화 품질·지연·의미적 사실 정확성은 아직 검증하지 않았습니다.
+**현재 확인된 범위:** 프로덕션 빌드, TypeScript, ESLint, 서버/SDK 계약·음성 배정·저장소 테스트 56개(HTTP API 테스트는 메모리·Redis 저장소에서 각각 실행), 데스크톱·모바일 Chromium E2E 14개 통과. E2E의 음성 입력·출력은 가짜 음성 인식·합성 객체로 흐름만 검증했으며 실제 마이크 인식과 음성 품질은 확인하지 않았습니다. E2E는 명시적인 개발용 목업으로 진행했습니다. 실제 Gemini 모델의 대화 품질·지연·의미적 사실 정확성은 아직 검증하지 않았습니다.
 
 ## 빠른 실행
 
@@ -28,7 +28,7 @@ Node.js **22.12 이상**과 npm이 필요합니다. 개발·테스트 환경은 
 npm ci
 ```
 
-프로젝트 루트에 `.env`를 만들고 `GEMINI_API_KEY`(필수), `GEMINI_MODEL`, `AI_MODE`, `PORT`, `APP_ORIGIN`, `TRUST_PROXY_HOPS`, `NODE_ENV`를 지정합니다. `.env`는 `.gitignore`로 제외되어 Git에 올라가지 않습니다. 키는 채팅이나 클라이언트 코드에 붙여 넣지 마세요.
+`.env.example`을 프로젝트 루트의 `.env`로 복사하고 `GEMINI_API_KEY`(필수)와 필요한 값을 채웁니다. `.env`는 `.gitignore`로 제외되어 Git에 올라가지 않습니다. 키는 채팅이나 클라이언트 코드에 붙여 넣지 마세요.
 
 ```powershell
 npm run dev
@@ -61,6 +61,12 @@ npm run dev:demo
 | `HOST`                  | 개발 `127.0.0.1`, 프로덕션 `0.0.0.0`                                                 |
 | `APP_ORIGIN`            | 개발 `http://localhost:5173`. 프로덕션은 실제 HTTPS origin                           |
 | `NODE_ENV`              | 개발 `development`. `npm start`가 `production` 지정                                  |
+| `TRUST_PROXY_HOPS`      | 비움. 프록시 뒤에서 실행할 때 `1`~`5`. Vercel은 `1`                                  |
+| `KV_REST_API_URL`       | 비움. Upstash Redis REST URL. Vercel의 Upstash 연동이 자동 주입                      |
+| `KV_REST_API_TOKEN`     | 비움. Upstash Redis REST 토큰(비밀 값). URL과 함께 있을 때만 Redis 사용              |
+| `UPSTASH_REDIS_REST_*`  | `_URL`·`_TOKEN`. Upstash 콘솔에서 직접 만든 경우 위 두 값 대신 사용 가능             |
+
+Redis URL과 토큰이 **둘 다** 있으면 재판 기록·멱등성 결과·처리 잠금·요청 속도 제한을 Redis에 저장하고, 없으면 지금처럼 서버 메모리에 저장합니다. `npm run dev`, `dev:demo`, 테스트는 Redis 없이 동작합니다. 로컬 `.env`에 Redis 값을 넣으면 개발 서버도 그 Redis를 사용하므로, 운영 DB 값은 넣지 마세요.
 
 `VITE_GEMINI_API_KEY`처럼 `VITE_` 접두어를 사용하면 안 됩니다. 브라우저는 동일 출처의 `/api`만 호출하며, 키나 모델 SDK를 포함하지 않습니다. 환경파일은 루트에 두고 명령도 루트에서 실행합니다.
 
@@ -76,13 +82,17 @@ client/
   src/style.css        # 디자인 토큰·반응형·접근성 스타일
 server/
   src/app.ts           # HTTP API, 세션 소유권, 잠금, 멱등성, 오류 변환
+  src/store.ts         # 저장소 인터페이스: 메모리 / Upstash Redis(REST)
   src/engine.ts        # 서버 권한의 재판 상태 머신
   src/ai.ts            # 역할별 프롬프트, JSON 스키마, Gemini 어댑터
   src/*.test.ts        # 상태·API·SDK 계약 테스트
 shared/
   types.ts             # 화면과 서버가 공유하는 데이터 계약
   cases.ts             # 원고/피고 진술과 확정 사실이 분리된 사건 3개
+api/index.js           # Vercel Function 엔트리(빌드된 Express 앱)
+vercel.json            # Vercel 빌드·재작성·정적 보안 헤더
 e2e/court.spec.ts       # 데스크톱·모바일 실제 브라우저 흐름
+scripts/               # 프로덕션 스모크, 실제 AI 평가
 docs/                  # 설계·검증 기록
 ```
 
@@ -110,7 +120,7 @@ stateDiagram-v2
 - AI 응답에는 상태 전환 권한이 없습니다. 숫자·단계·확인된 사실은 클라이언트나 모델이 덮어쓸 수 없습니다.
 - 질문의 정규화된 문구와 주제를 기록합니다. 원고 모드에서 같은 주제나 같은 문구가 제안되면 재질문하지 않고 종료합니다. 사용자가 판사일 때는 동일 문구 재질문을 거절합니다.
 - 이의 제기는 발언을 선택하고 근거를 입력합니다. 해당 발언을 AI에 함께 전달하며, 재판당 1회·심문 예산 안에서 처리합니다. 원고 모드에서는 현재 질문에 대한 응답 기회를 대신합니다. 세 번째 질문 단계의 이의 제기 후에는 추가 질문 없이 종료합니다.
-- 요청마다 `requestId`와 `version`을 검사합니다. 같은 요청은 같은 결과를 돌려주며, 세션별 처리 잠금으로 동시 호출을 막습니다. 실패한 생성은 원본 세션에 반영하지 않습니다.
+- 요청마다 `requestId`와 `version`을 검사합니다. 같은 요청은 같은 결과를 돌려주며, 세션별 처리 잠금으로 동시 호출을 막습니다. Redis를 쓰면 잠금과 멱등성 결과를 인스턴스끼리 공유합니다. 실패한 생성은 원본 세션에 반영하지 않습니다.
 
 ## AI 연동과 사실 관리
 
@@ -126,7 +136,7 @@ stateDiagram-v2
 
 | 경로                           | 설명                                                                           |
 | ------------------------------ | ------------------------------------------------------------------------------ |
-| `GET /api/health`              | 연결 상태, Gemini/목업 여부. 비밀 값 미포함                                    |
+| `GET /api/health`              | 연결 상태, Gemini/목업 여부, 저장소(`memory`/`redis`). 비밀 값 미포함          |
 | `GET /api/cases`               | 판사 모드 사건 3개                                                             |
 | `POST /api/trials`             | `requestId`, `mode`, `title?`, `summary?`, `caseId?`로 접수·초기 공방          |
 | `GET /api/trials/:id`          | 같은 브라우저 쿠키 소유자의 최신 재판 복구                                     |
@@ -136,12 +146,12 @@ stateDiagram-v2
 
 ## 기록 보관과 안전
 
-- 재판 내용은 서버 메모리에서 마지막 접근 후 2시간 동안만 복구됩니다. 만료 자료는 다음 API 접근 시 정리되고, 서버 재시작 시 모두 사라집니다.
+- 재판 내용은 마지막 접근 후 2시간 동안만 복구됩니다. 메모리 저장소는 만료 자료를 다음 API 접근 시 정리하고 서버 재시작 시 모두 잃습니다. Redis 저장소는 키 만료 시간(TTL)으로 같은 2시간을 지키며, 사진 원본은 저장하지 않습니다.
 - 브라우저 `sessionStorage`에는 **마지막 재판 ID만** 저장합니다. 원문·키·전체 재판을 로컬 저장하지 않습니다.
 - 무작위 세션 ID와 HttpOnly·SameSite 쿠키로 소유권을 확인합니다. 프로덕션 쿠키는 Secure이며 HTTPS가 필요합니다.
 - 모델에 사연이 전송되므로 이름·연락처 등 개인정보를 적지 않도록 접수 화면에서 안내합니다. 원문·API 키·SDK 오류 내용을 로그에 출력하지 않습니다.
 - 심각한 피해는 서버 키워드 필터와 모델의 의미 분류로 확인하고, 대사를 표시하지 않은 채 별도 안전 화면으로 보냅니다. 키워드 필터에는 오탐·누락 가능성이 있습니다.
-- 요청 크기, 입력 길이, 보관 세션 수, 요청 속도 제한과 보안 응답 헤더를 적용합니다. 인증·영구저장·결제는 이번 범위에 없습니다.
+- 요청 크기, 입력 길이, 보관 세션 수, 요청 속도 제한과 보안 응답 헤더를 적용합니다. 인증·장기 보관·결제는 이번 범위에 없습니다.
 
 ## 빌드와 테스트
 
@@ -154,7 +164,10 @@ npm run smoke
 npx playwright install chromium  # 최초 1회만 필요
 npm run test:e2e
 npm audit
+npm run eval:ai  # 실제 Gemini 평가. .env에 GEMINI_API_KEY 필요, 무료 할당량 사용
 ```
+
+`npm run eval:ai`는 [실제 AI 평가](docs/AI_EVALUATION.md)의 8개 항목을 실제 Gemini로 실행합니다. 질문 수·단계·판결 결과 같은 규칙은 자동으로 판정하고, 중립성처럼 문장을 읽어야 하는 기준은 휴리스틱 표시와 대화 원문을 `artifacts/ai-eval-*.json`에 남깁니다. `EVAL_ROUNDS`(기본 3), `EVAL_GAP_MS`(요청 간격, 기본 4000), `EVAL_ONLY=2,3`으로 조절합니다.
 
 E2E는 별도 포트 **4173/3002**로 개발 목업 서버를 시작하고 종료합니다. Chrome 데스크톱과 iPhone 13 크기의 Chromium을 검증하며 실제 iOS Safari 검증은 아닙니다. 스크린샷은 `artifacts/`, 실패 기록은 `test-results/`에 생성됩니다. 세부 결과와 실제 AI 추가 평가 항목은 [테스트 기록](docs/TESTING.md)을 참조하세요.
 
@@ -167,10 +180,54 @@ npm start
 
 웹과 API를 Express가 함께 제공합니다. 기본 포트는 `3001`입니다. 프로덕션의 세션 동작에는 HTTPS가 필요합니다. 로컬 HTTP에서 전체 체험을 하려면 `npm run dev`를 사용하세요.
 
+## Vercel 배포 (무료 플랜)
+
+Vercel은 요청마다 다른 함수 인스턴스가 처리할 수 있으므로, 재판 기록을 **Upstash Redis**(Vercel Marketplace 무료 플랜)에 저장합니다.
+
+| 구성           | 내용                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------- |
+| 화면           | `npm run build`의 `client/dist`를 Vercel CDN이 제공. 없는 경로는 `index.html`로 재작성(SPA)             |
+| API            | `/api/*` → `api/index.js` 함수 하나가 Express 앱 전체를 처리. 최대 실행 60초                            |
+| 보안 헤더      | API는 helmet, CDN 페이지는 `vercel.json`의 같은 헤더. 둘이 같은지 테스트로 검사                         |
+| 재판·멱등성    | `court:trial:{id}`, `court:done:{owner}:{requestId}`. 2시간 TTL, 재판은 조회·진행 시 연장               |
+| 처리 잠금      | `court:lock:{id}`를 `SET NX PX 75000`으로 획득, 토큰이 같을 때만 해제. 함수가 중단돼도 75초 뒤 자동 해제 |
+| 세션 수 제한   | 만료 시각을 점수로 둔 정렬 집합으로 전체 1000개·소유자당 15개 유지                                      |
+| 요청 속도 제한 | 분당 180회·쓰기 40회를 Redis 카운터로 모든 인스턴스가 공유                                              |
+
+Redis 클라이언트는 Upstash REST API를 `fetch`로 직접 호출하므로 추가 패키지가 없습니다. Redis에 연결할 수 없으면 메모리로 바꾸지 않고 `500 SERVER_ERROR`를 반환합니다. 인스턴스마다 기록이 달라지는 것을 막기 위해서입니다.
+
+### 배포 순서
+
+1. 이 저장소를 GitHub에 올립니다.
+2. Vercel 대시보드 → **Add New → Project**에서 저장소를 Import합니다. Framework Preset은 **Other**, Root Directory는 저장소 루트로 둡니다. 빌드 명령·출력 폴더는 `vercel.json`이 지정하므로 비워 둡니다.
+3. 프로젝트 → **Storage → Create Database → Upstash for Redis**에서 무료 플랜을 고르고 프로젝트에 연결합니다. 환경은 Production(필요하면 Preview도)을 선택합니다. `KV_REST_API_URL`, `KV_REST_API_TOKEN`이 자동으로 추가됩니다. 지역은 함수 지역과 가깝게 고릅니다. 함수 기본 지역은 미국 동부(`iad1`)이고, **Settings → Functions → Function Region**에서 서울(`icn1`)로 바꿀 수 있습니다.
+4. **Settings → Environment Variables**(Production)에 추가합니다.
+   - `GEMINI_API_KEY`: Gemini API 키. Sensitive로 저장
+   - `APP_ORIGIN`: `https://<프로젝트>.vercel.app`처럼 실제 주소. 끝에 `/` 없이 정확히 입력
+   - `TRUST_PROXY_HOPS`: `1`. 사용자별 요청 속도 제한에 필요
+   - 선택: `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `GEMINI_THINKING_LEVEL`
+   - 넣지 않을 값: `NODE_ENV`(빌드에 필요한 개발 의존성 설치가 빠짐), `AI_MODE=mock`(프로덕션에서는 서버가 시작되지 않음), `PORT`, `HOST`
+5. **Deployments**에서 최신 배포를 **Redeploy**합니다. 환경변수는 새 배포부터 적용됩니다.
+
+### 배포 후 확인
+
+1. `https://<도메인>/api/health`가 `{"ok":true,"aiMode":"gemini","configured":true,"store":"redis"}`인지 확인합니다. `store`가 `memory`면 Redis 연결(3단계)을 다시 확인합니다.
+2. 원고 모드로 접수 → 답변 → 새로고침 후 복원 → 판결까지 진행합니다. 사진 증거 3장도 한 번 첨부해 봅니다.
+3. Upstash 콘솔의 Data Browser에서 `court:trial:*` 키와 약 7200초 TTL을 확인합니다.
+4. 브라우저 개발자 도구에서 첫 페이지 응답에 `Content-Security-Policy` 헤더가 있는지 확인합니다.
+5. Vercel **Logs**에서 `[ai] ... failed` 경고나 500 오류가 없는지 확인합니다.
+
+### 제한과 주의
+
+- **요청 크기:** Vercel 함수 요청 본문은 4.5MB까지입니다. 사진은 장당 base64 1,400,000자로 줄여 올리므로 3장과 사연 5,000자를 합쳐도 약 4.22MB로 제한 안에 들어갑니다.
+- **Preview 배포:** 주소가 `APP_ORIGIN`과 달라 쓰기 요청이 `403 ORIGIN`으로 거절됩니다. Preview에서 시험하려면 Preview 환경에 그 주소의 `APP_ORIGIN`을 따로 지정합니다. 커스텀 도메인을 연결하면 `APP_ORIGIN`을 바꾸고 다시 배포합니다.
+- **무료 한도:** 재판 1건(접수·심문 3회·판결)에 Redis 명령이 약 80~120개 쓰입니다(측정값: 접수 19, 진행 1회 17, 조회 8). 월 명령 한도는 Upstash 대시보드에서 확인하세요. Gemini 무료 등급 한도에 걸리면 `429 AI_BUSY` 안내가 표시됩니다.
+- Redis 동작은 실제 Redis 없이 Upstash 명령을 흉내 내는 테스트용 클라이언트로 검증했습니다(여러 인스턴스 공유, TTL, 잠금, 세션 수, 속도 제한). 실제 Upstash에서는 위 확인 절차로 점검합니다.
+
 ## 남은 검증과 개선
 
 - **P0 남은 확인:** 실제 Gemini 키로 두 모드를 끝까지 실행하며 내용 반영, 중립성, 의미 중복 질문, 모순·민감 사례, 응답 품질과 지연을 평가해야 합니다.
 - **P1 미구현:** PNG 내보내기. 현재 내보내기는 SVG입니다. 실제 Gemini로 사진 관찰 기록의 정확성과 개인정보 배제를 평가해야 합니다.
-- **확장:** 다중 인스턴스용 영구 세션 저장소, 재판 목록·삭제, 익명 공유 링크, 실제 Safari 및 보조공학 평가.
+- **확장:** 재판 목록·삭제, 익명 공유 링크, 실제 Safari 및 보조공학 평가.
 
 설계 결정과 처음의 작업 계획은 [설계 문서](docs/ARCHITECTURE.md)를 참조하세요.

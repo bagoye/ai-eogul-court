@@ -17,7 +17,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -p client/tsconfig.json && tsc -p server/tsconfig.json --noEmit",
     "format": "prettier --write .",
-    "smoke": "node scripts/smoke-production.mjs"
+    "smoke": "node scripts/smoke-production.mjs",
+    "eval:ai": "npm run build -w server && node --env-file-if-exists=.env scripts/ai-eval.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
