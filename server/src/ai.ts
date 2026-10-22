@@ -4,6 +4,16 @@ import type { Trial, Speaker, Photo } from '../../shared/types.js';
 import { AppError } from './errors.js';
 
 const text = z.string().min(1).max(450);
+const TOPICS = [
+  'agreement',
+  'ownership',
+  'communication',
+  'impact',
+  'remedy',
+  'other',
+  'none',
+] as const;
+type Topic = (typeof TOPICS)[number];
 export const outputSchema = z.object({
   safety: z.enum(['everyday', 'serious']),
   caseTitle: z.string().min(1).max(65),
@@ -20,15 +30,7 @@ export const outputSchema = z.object({
   contradictions: z.array(z.string().max(250)).max(8),
   evidenceNotes: z.array(z.string().min(1).max(250)).max(3),
   suggestedQuestion: z.string().max(200),
-  questionTopic: z.enum([
-    'agreement',
-    'ownership',
-    'communication',
-    'impact',
-    'remedy',
-    'other',
-    'none',
-  ]),
+  questionTopic: z.enum(TOPICS),
   verdict: z
     .object({
       title: text,
@@ -60,7 +62,7 @@ export const SYSTEM_PROMPT = `너는 일상 속 사소한 갈등만 다루는 �
 판사 모드: opening에서는 plaintiff, defendant 각 1회. answer에서는 target 당사자만 1회 답변. 자료에 없는 답은 알 수 없다고 하라. suggestedQuestion은 빈 문자열.
 objection: objectionTo 발언과 반박을 검토하여 judge 1회만 정정/유지와 이유를 말하라. 원고 모드의 다음 질문은 suggestedQuestion만 사용.
 questionCount가 3 이상이거나 phase가 closing/completed이면 suggestedQuestion은 빈 문자열. 기존 질문이나 이미 진술에 답이 있는 내용을 재질문하지 마라. 필요한 질문이 없으면 빈 문자열.
-질문의 핵심을 questionTopic으로 분류하라: agreement(사전 합의), ownership(구매/소유), communication(상대방 설명/소통), impact(피해), remedy(원하는 해결), other, none(질문 없음). askedQuestionTopics와 같은 주제를 재질문하지 마라. 질문은 한 문장만.
+질문의 핵심을 questionTopic으로 분류하라. agreement=사건 전에 정한 약속이나 미리 알린 것(예: 미리 그러지 말라고 말한 적이 있나요?), ownership=누가 사거나 돈을 냈는지, 누구 몫인지(예: 그 물건은 누가 샀나요?), communication=사건 뒤 상대방과 나눈 대화나 상대방의 설명(예: 그 뒤 상대방은 뭐라고 했나요?), impact=원고가 입은 피해나 감정(예: 어떤 점이 가장 속상했나요?), remedy=원고가 원하는 해결(예: 상대방에게 무엇을 바라나요?), other, none=질문 없음. availableTopics에 있는 주제만 고르고, 그 주제에 맞는 새 질문을 하라. 이미 물은 내용을 다른 주제 이름으로 다시 묻지 마라. 질문은 한 문장만.
 확인된 사실은 confirmedFacts에 있는 것뿐이다. claims와 opposingClaims는 해당 당사자의 일방적 주장이다. 의도, 구매자, 대화 내용을 지어내지 마라.
 referencedFacts에는 실제 참고한 confirmedFacts/claims/opposingClaims의 id만 넣어라. unresolvedIssues에는 실제로 부족한 정보만. 모순은 이전 진술과의 구체적인 충돌을 기록하라. 엉뚱한 답변은 확인 불가로 남겨라.
 질문에 답하지 않거나 되묻는 답변(예: '그게 중요한가요?')은 그 질문에 답하지 않은 것으로만 다뤄라. '알리지 않았다', '말하지 않았다', '소통이 없었다'처럼 답을 추정해 원고의 진술로 바꾸지 말고, 그 질문은 unresolvedIssues와 verdict.unresolved에 '원고가 답하지 않음'으로 남겨라. '원고 주장에 따르면', '원고 진술에 따르면' 뒤에는 원고가 실제로 한 말만 써라. 원고의 주장을 '사실이나'처럼 사실로 부르지 마라.
@@ -82,13 +84,21 @@ export function allowedSpeakers({ trial, operation, target }: AIContext): Speake
 }
 // Structured output then cannot name anyone else; lite models swapped advocates for
 // plaintiff/defendant in plaintiff mode before this.
+// Topics the judge has not used yet. The server already ends examination on a repeated topic;
+// offering only fresh ones steers the model to a new question instead of ending after one.
+export function availableTopics({ trial, operation }: AIContext): Topic[] {
+  if (trial.mode !== 'plaintiff' || operation === 'verdict') return [...TOPICS];
+  return TOPICS.filter((t) => t === 'none' || !trial.askedQuestionTopics.includes(t));
+}
 function responseSchema(context: AIContext) {
   const speakers = allowedSpeakers(context);
-  if (!speakers.length) return outputSchema;
   return outputSchema.extend({
-    messages: z
-      .array(z.object({ speaker: z.enum(speakers as [Speaker, ...Speaker[]]), content: text }))
-      .max(3),
+    ...(speakers.length && {
+      messages: z
+        .array(z.object({ speaker: z.enum(speakers as [Speaker, ...Speaker[]]), content: text }))
+        .max(3),
+    }),
+    questionTopic: z.enum(availableTopics(context) as [Topic, ...Topic[]]),
   });
 }
 
@@ -176,6 +186,7 @@ export function createGeminiProvider(): Provider {
                     ...rest,
                     trial: { ...context.trial, messages: context.trial.messages.slice(-14) },
                     photos: photos.length,
+                    availableTopics: availableTopics(context),
                     validationRetry: attempt > 0,
                   }),
                 },

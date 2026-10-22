@@ -112,13 +112,23 @@ async function generate(
   if (trial.mode === 'plaintiff') {
     const q = output.suggestedQuestion.trim();
     // The model cannot control phase or budget. Repeated/no question ends examination.
-    if (
-      trial.questionCount >= 3 ||
-      !q ||
-      output.questionTopic === 'none' ||
-      trial.askedQuestionTopics.includes(output.questionTopic) ||
-      trial.askedQuestions.some((old) => normalized(old) === normalized(q))
-    ) {
+    const closeReason =
+      trial.questionCount >= 3
+        ? 'limit'
+        : !q
+          ? 'no question'
+          : output.questionTopic === 'none'
+            ? 'topic none'
+            : trial.askedQuestionTopics.includes(output.questionTopic)
+              ? `repeated topic ${output.questionTopic}`
+              : trial.askedQuestions.some((old) => normalized(old) === normalized(q))
+                ? 'repeated question'
+                : '';
+    if (closeReason) {
+      // Category names only, never the question text, so the log shows why examinations end.
+      console.info(
+        `[engine] examination closed after ${trial.questionCount} question(s): ${closeReason}`,
+      );
       trial.phase = 'closing';
       return;
     }

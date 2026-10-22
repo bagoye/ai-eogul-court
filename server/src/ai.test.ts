@@ -43,6 +43,15 @@ describe('Gemini adapter contract', () => {
     expect(call.config.responseMimeType).toBe('application/json');
     expect(call.config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
     expect(call.config.responseJsonSchema).toHaveProperty('properties.messages');
+    // A topic already asked is not offered again, so the next question has to be new.
+    expect(ctx.trial.askedQuestionTopics).toEqual(['agreement']);
+    expect(call.config.responseJsonSchema.properties.questionTopic.enum).not.toContain(
+      ctx.trial.askedQuestionTopics[0],
+    );
+    expect(call.config.responseJsonSchema.properties.questionTopic.enum).toContain('none');
+    expect(JSON.parse(call.contents[0].parts[0].text).availableTopics).not.toContain(
+      ctx.trial.askedQuestionTopics[0],
+    );
     // Plaintiff-mode turns may only be voiced by the two advocates.
     expect(
       call.config.responseJsonSchema.properties.messages.items.properties.speaker.enum,
