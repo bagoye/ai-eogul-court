@@ -43,6 +43,10 @@ describe('Gemini adapter contract', () => {
     expect(call.config.responseMimeType).toBe('application/json');
     expect(call.config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
     expect(call.config.responseJsonSchema).toHaveProperty('properties.messages');
+    // Plaintiff-mode turns may only be voiced by the two advocates.
+    expect(
+      call.config.responseJsonSchema.properties.messages.items.properties.speaker.enum,
+    ).toEqual(['defender', 'prosecutor']);
     expect(JSON.stringify(call.contents)).not.toContain('test-key-never-real');
   });
   it('sends photos as image parts, keeps them out of the JSON text, and requires one note each', async () => {
@@ -99,8 +103,8 @@ describe('Gemini adapter contract', () => {
       .mockResolvedValueOnce({ text: JSON.stringify(await mockProvider(ctx)) });
     await expect(createGeminiProvider()(ctx)).resolves.toHaveProperty('safety', 'everyday');
     expect(generateContent.mock.calls.map((c) => c[0].model)).toEqual([
-      'gemini-3.8-flash',
       'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
     ]);
     generateContent.mockReset();
     generateContent.mockRejectedValue({ status: 429 });
@@ -141,12 +145,34 @@ describe('Gemini adapter contract', () => {
     const result = await createGeminiProvider()(ctx);
     expect(result.messages.map((m) => m.speaker)).toEqual(['defender']);
     expect(generateContent.mock.calls.map((c) => c[0].model)).toEqual([
-      'gemini-3.8-flash',
       'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
     ]);
     expect(generateContent.mock.calls.map((c) => c[0].config.httpOptions.timeout)).toEqual([
       20000, 20000,
     ]);
+  });
+  it('holds a one-sided primary turn and uses it only when the fallback cannot do better', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const ctx = await context();
+    const output = await mockProvider(ctx);
+    const oneSided = { ...output, messages: output.messages.slice(1) };
+    generateContent
+      .mockResolvedValueOnce({ text: JSON.stringify(oneSided) })
+      .mockResolvedValueOnce({ text: JSON.stringify(output) });
+    expect((await createGeminiProvider()(ctx)).messages).toHaveLength(2);
+    generateContent.mockReset();
+    generateContent
+      .mockResolvedValueOnce({ text: JSON.stringify(oneSided) })
+      .mockRejectedValueOnce({ status: 429 });
+    const kept = await createGeminiProvider()(ctx);
+    expect(kept.messages.map((m) => m.speaker)).toEqual(['prosecutor']);
+    // Nothing usable from either model is still an error.
+    generateContent.mockReset();
+    generateContent
+      .mockResolvedValueOnce({ text: JSON.stringify({ ...output, messages: [] }) })
+      .mockRejectedValueOnce({ status: 429 });
+    await expect(createGeminiProvider()(ctx)).rejects.toMatchObject({ code: 'AI_BUSY' });
   });
   it('does not expose upstream error details or retry authentication failures', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
