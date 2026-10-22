@@ -71,7 +71,13 @@ photos가 첨부되면 원고가 제출한 사진 증거다. 사진마다 순서
 trial.evidence는 이전 사진에 대한 관찰 기록이며 촬영 시점과 진위는 확인되지 않았다. 판결에 쓸 때는 '제출된 사진에 따르면'처럼 출처를 밝혀라.
 caseTitle은 내용에 맞는 짧고 자연스러운 사건명. verdict는 title, result, reasons, unresolved, reconciliation, lastWord를 포함하며 화해 권고는 가볍고 실행 가능한 것으로 작성하라.`;
 
-export function validateOutput(raw: unknown, context: AIContext): AIOutput {
+export function validateOutput(
+  raw: unknown,
+  context: AIContext,
+  // Accept one of the two plaintiff-mode advocates; used for the fallback model, which often
+  // drops a line. A one-sided turn beats failing the whole request.
+  { lenient = false } = {},
+): AIOutput {
   const out = outputSchema.parse(raw);
   if (out.safety === 'serious') return out;
   const { trial, operation, target } = context;
@@ -87,6 +93,7 @@ export function validateOutput(raw: unknown, context: AIContext): AIOutput {
             : [target!];
   // Lighter models sometimes add a line for a role that may not speak now. Dropping it is
   // safe: nothing is reassigned, and the remaining lines must still satisfy every rule below.
+  const received = out.messages.map((m) => m.speaker);
   out.messages = out.messages.filter((m) => allowed.includes(m.speaker));
   if (new Set(out.messages.map((m) => m.speaker)).size !== out.messages.length)
     throw new Error('Invalid speaker');
@@ -96,7 +103,10 @@ export function validateOutput(raw: unknown, context: AIContext): AIOutput {
       : operation === 'objection' || (trial.mode === 'judge' && operation === 'answer')
         ? 1
         : 2;
-  if (out.messages.length !== expected) throw new Error('Missing speaker');
+  const minimum = lenient && expected === 2 ? 1 : expected;
+  // Role names only, never dialogue, so the warning log shows what the model sent instead.
+  if (out.messages.length < minimum || out.messages.length > expected)
+    throw new Error(`Missing speaker (got: ${received.join(',') || 'none'})`);
   if (out.messages.some((m) => /[?？]/u.test(m.content) || m.content.length > 350))
     throw new Error('Dialogue must not contain extra questions');
   const ids = new Set(
@@ -164,11 +174,12 @@ export function createGeminiProvider(): Provider {
             temperature: 0.35,
             maxOutputTokens: 4096,
             ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-            // Give up on a slow primary early so the fallback still answers within ~30s.
-            httpOptions: { timeout: attempt === 0 ? 12000 + photos.length * 4000 : 20000 },
+            // 12s timed out most primary calls under load. Primary and fallback together stay
+            // under the client's 60s wait and the 60s Vercel function limit.
+            httpOptions: { timeout: attempt === 0 ? 20000 + photos.length * 3000 : 20000 },
           },
         });
-        return validateOutput(JSON.parse(response.text || ''), context);
+        return validateOutput(JSON.parse(response.text || ''), context, { lenient: attempt > 0 });
       } catch (err) {
         const status = (err as { status?: number }).status;
         // Rule names and status codes only: never prompts, stories, keys or raw SDK messages.
@@ -185,7 +196,13 @@ export function createGeminiProvider(): Provider {
         console.warn(
           `[ai] ${context.operation} attempt ${attempt + 1} on ${attempt === 0 ? primary : fallback || primary} failed: ${reason}`,
         );
-        if (status === 401 || status === 403)
+        // Gemini answers an invalid or expired key with 400 API_KEY_INVALID, not 401/403.
+        const badKey =
+          status === 400 &&
+          /API_KEY_INVALID|API key (not valid|expired)/i.test(
+            String((err as { message?: unknown }).message),
+          );
+        if (status === 401 || status === 403 || badKey)
           throw new AppError(
             503,
             'AI_AUTH',

@@ -128,6 +128,26 @@ describe('Gemini adapter contract', () => {
     const onlyExtra = { ...output, messages: [{ speaker: 'judge' as const, content: '판사' }] };
     expect(() => validateOutput(onlyExtra, ctx)).toThrow('Missing speaker');
   });
+  it('accepts a one-sided plaintiff turn only from the fallback model', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const ctx = await context();
+    const output = await mockProvider(ctx);
+    const oneSided = { ...output, messages: output.messages.slice(0, 1) };
+    expect(() => validateOutput(oneSided, ctx)).toThrow('Missing speaker');
+    expect(validateOutput(oneSided, ctx, { lenient: true }).messages).toHaveLength(1);
+    const none = { ...output, messages: [] };
+    expect(() => validateOutput(none, ctx, { lenient: true })).toThrow('Missing speaker');
+    generateContent.mockResolvedValue({ text: JSON.stringify(oneSided) });
+    const result = await createGeminiProvider()(ctx);
+    expect(result.messages.map((m) => m.speaker)).toEqual(['defender']);
+    expect(generateContent.mock.calls.map((c) => c[0].model)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ]);
+    expect(generateContent.mock.calls.map((c) => c[0].config.httpOptions.timeout)).toEqual([
+      20000, 20000,
+    ]);
+  });
   it('does not expose upstream error details or retry authentication failures', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
     generateContent.mockRejectedValue({ status: 403, message: 'upstream-secret-key-content' });
@@ -136,5 +156,30 @@ describe('Gemini adapter contract', () => {
       status: 503,
     });
     expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+  it('treats an invalid key reported as 400 as an authentication failure', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'wrong-key');
+    // Shape of the SDK's ApiError for a bad key: the response body as a JSON string.
+    const body = {
+      error: {
+        code: 400,
+        message: 'API key not valid. Please pass a valid API key.',
+        status: 'INVALID_ARGUMENT',
+        details: [{ reason: 'API_KEY_INVALID' }],
+      },
+    };
+    generateContent.mockRejectedValue({ status: 400, message: JSON.stringify(body) });
+    await expect(createGeminiProvider()(await context())).rejects.toMatchObject({
+      code: 'AI_AUTH',
+      status: 503,
+    });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    // Other bad requests still retry on the fallback model.
+    generateContent.mockReset();
+    generateContent.mockRejectedValue({ status: 400, message: '{"error":{"code":400}}' });
+    await expect(createGeminiProvider()(await context())).rejects.toMatchObject({
+      code: 'AI_UNAVAILABLE',
+    });
+    expect(generateContent).toHaveBeenCalledTimes(2);
   });
 });

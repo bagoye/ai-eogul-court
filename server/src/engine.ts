@@ -83,7 +83,8 @@ async function generate(
   extra: Partial<AIContext> = {},
 ) {
   const context: AIContext = { trial, operation, input, ...extra };
-  const output = validateOutput(await provider(context), context);
+  // Providers apply the strict speaker count themselves; keep a fallback's one-sided turn.
+  const output = validateOutput(await provider(context), context, { lenient: true });
   if (output.safety === 'serious') {
     trial.phase = 'safety';
     return;
