@@ -183,6 +183,49 @@ describe('Gemini adapter contract', () => {
       .mockRejectedValueOnce({ status: 429 });
     await expect(createGeminiProvider()(ctx)).rejects.toMatchObject({ code: 'AI_BUSY' });
   });
+  it('keeps verdicts out of non-verdict turns in the schema and drops a stray one', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const ctx = await context();
+    const output = await mockProvider(ctx);
+    const verdict = {
+      title: '판결',
+      result: '판단 유보',
+      reasons: ['이유'],
+      unresolved: [],
+      reconciliation: '화해',
+      lastWord: '한마디',
+    };
+    expect(validateOutput({ ...output, verdict }, ctx).verdict).toBeNull();
+    generateContent.mockResolvedValue({ text: JSON.stringify(output) });
+    await createGeminiProvider()(ctx);
+    const schema = generateContent.mock.calls[0][0].config.responseJsonSchema;
+    expect(schema.properties.verdict.type).toBe('null');
+  });
+  it('limits plaintiff verdicts to the four decisions in the schema and in validation', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const base = await context();
+    const ctx = {
+      ...base,
+      trial: { ...base.trial, phase: 'closing' as const },
+      operation: 'verdict' as const,
+    };
+    const output = await mockProvider(ctx);
+    expect(output.verdict?.result).toBe('판단 유보');
+    const freeForm = {
+      ...output,
+      verdict: { ...output.verdict!, result: '원고 청구 기각 (판단 보류)' },
+    };
+    expect(() => validateOutput(freeForm, ctx)).toThrow('Unknown decision');
+    generateContent.mockResolvedValue({ text: JSON.stringify(output) });
+    await createGeminiProvider()(ctx);
+    const schema = generateContent.mock.calls[0][0].config.responseJsonSchema;
+    expect(schema.properties.verdict.anyOf[0].properties.result.enum).toEqual([
+      '원고 주장 인정',
+      '피고 주장 인정',
+      '양측 일부 책임',
+      '판단 유보',
+    ]);
+  });
   it('does not expose upstream error details or retry authentication failures', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
     generateContent.mockRejectedValue({ status: 403, message: 'upstream-secret-key-content' });
