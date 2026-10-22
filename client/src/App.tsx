@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import type { CaseFile, Decision, Message, Mode, Photo, Trial } from '../../shared/types';
 import { DECISIONS, DISCLAIMER, MAX_PHOTOS } from '../../shared/types';
+import { EXAMPLE_TRIALS } from '../../shared/examples';
 import { CourtScene, Judge, Prosecutor, Defender } from './characters';
 import { api, APIError, getTrial } from './api';
 import { appendText, MicButton, PhotoPicker } from './media';
@@ -77,11 +78,22 @@ function Button({
     </button>
   );
 }
-function ErrorNotice({ children }: { children: ReactNode }) {
+// When the model is busy or the daily quota is spent, a recorded trial still shows the flow.
+const AI_DOWN = ['AI_BUSY', 'AI_UNAVAILABLE', 'DAILY_LIMIT'];
+const aiDown = (err: unknown) => err instanceof APIError && AI_DOWN.includes(err.code);
+function ErrorNotice({ children, example }: { children: ReactNode; example?: boolean }) {
   return (
     <div className="error" role="alert">
       <AlertCircle size={18} />
-      <span>{children}</span>
+      <span>
+        {children}
+        {example && (
+          <>
+            {' '}
+            <Link to="/example/plaintiff">기다리는 동안 실제 AI 예시 재판 보기</Link>
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -169,6 +181,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/intake/:mode" element={<Intake />} />
         <Route path="/trial/:id" element={<TrialPage />} />
+        <Route path="/example/:id" element={<ExamplePage />} />
         <Route
           path="*"
           element={
@@ -269,6 +282,9 @@ function Home() {
               <Clock3 size={16} /> 재판 한 번, 약 3–5분
             </span>
           </div>
+          <Link to="/example/plaintiff" className="hero-example">
+            <FileText size={15} /> 실제 AI가 진행한 예시 재판 먼저 보기
+          </Link>
           <div className="hero-social">
             <div className="mini-avatars">
               <span>
@@ -405,6 +421,7 @@ function Intake() {
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const pending = useRef<{ signature: string; id: string } | null>(null);
   const lock = useRef(false);
   useEffect(() => {
@@ -443,6 +460,7 @@ function Intake() {
       navigate(`/trial/${trial.id}`, { state: { fresh: true } });
     } catch (err) {
       setError((err as Error).message);
+      setUnavailable(aiDown(err));
     } finally {
       lock.current = false;
       setBusy(false);
@@ -608,7 +626,7 @@ function Intake() {
               </div>
             </>
           )}
-          {error && <ErrorNotice>{error}</ErrorNotice>}
+          {error && <ErrorNotice example={unavailable}>{error}</ErrorNotice>}
           <Button type="submit" disabled={busy || (mode === 'judge' && !selected)}>
             {busy ? (
               <>
@@ -636,6 +654,7 @@ function TrialPage() {
   const [trial, setTrial] = useState<Trial>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const [input, setInput] = useState('');
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [target, setTarget] = useState<'plaintiff' | 'defendant'>('plaintiff');
@@ -726,6 +745,7 @@ function TrialPage() {
       pending.current = null;
     } catch (err) {
       setError((err as Error).message);
+      setUnavailable(aiDown(err));
       if (err instanceof APIError && err.code === 'STALE_VERSION') await reload();
     } finally {
       lock.current = false;
@@ -1139,7 +1159,7 @@ function TrialPage() {
               </details>
             </div>
           )}
-          {error && <ErrorNotice>{error}</ErrorNotice>}
+          {error && <ErrorNotice example={unavailable}>{error}</ErrorNotice>}
         </section>
       </div>
     </main>
@@ -1185,7 +1205,15 @@ function FactRecord({ trial }: { trial: Trial }) {
   );
 }
 
-function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boolean }) {
+function VerdictPage({
+  trial,
+  autoRead = false,
+  example = false,
+}: {
+  trial: Trial;
+  autoRead?: boolean;
+  example?: boolean;
+}) {
   const [review, setReview] = useState(false);
   const [saved, setSaved] = useState(false);
   const verdict = trial.verdict!;
@@ -1248,6 +1276,23 @@ function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boo
   }
   return (
     <main className="verdict-page">
+      {example && (
+        <div className="example-notice" role="note">
+          <strong>예시 재판</strong> 실제 Gemini가 생성한 응답을 그대로 저장한 기록입니다. 지금 새로
+          생성한 내용이 아니며, 사연과 답변은 평가용으로 작성했습니다.
+          <span className="example-switch">
+            {EXAMPLE_TRIALS.map((t) => (
+              <Link
+                key={t.id}
+                to={`/example/${t.mode}`}
+                aria-current={t.id === trial.id ? 'page' : undefined}
+              >
+                {t.mode === 'judge' ? '판사 모드 예시' : '원고 모드 예시'}
+              </Link>
+            ))}
+          </span>
+        </div>
+      )}
       <p className="eyebrow">THE COURT HAS SPOKEN</p>
       <h1>
         {trial.mode === 'judge' ? '판사님의 판결이 내려졌습니다.' : '오늘의 재판을 마칩니다.'}
@@ -1266,7 +1311,7 @@ function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boo
       <article className="verdict-card">
         <div className="verdict-top">
           <span>AI 억울법정</span>
-          <span>사건 #{trial.id.slice(0, 8).toUpperCase()}</span>
+          <span>사건 #{example ? '예시' : trial.id.slice(0, 8).toUpperCase()}</span>
         </div>
         <div className="verdict-emblem">
           <Scale size={34} />
@@ -1322,19 +1367,21 @@ function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boo
           <p className="verdict-disclaimer">개발용 목업으로 생성한 테스트 판결문입니다.</p>
         )}
       </article>
-      <div className="save-review">
-        <label>
-          <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />{' '}
-          저장될 사연과 판결에 개인정보가 없는지 확인했습니다.
-        </label>
-        <Button secondary onClick={saveSVG} disabled={!review}>
-          <Download size={17} /> {saved ? '다시 이미지 저장' : '판결문 이미지 저장 (SVG)'}
-        </Button>
-      </div>
-      <Link to="/" className="button">
-        새로운 사건 시작하기 <ArrowRight size={17} />
+      {!example && (
+        <div className="save-review">
+          <label>
+            <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />{' '}
+            저장될 사연과 판결에 개인정보가 없는지 확인했습니다.
+          </label>
+          <Button secondary onClick={saveSVG} disabled={!review}>
+            <Download size={17} /> {saved ? '다시 이미지 저장' : '판결문 이미지 저장 (SVG)'}
+          </Button>
+        </div>
+      )}
+      <Link to={example ? '/#choose' : '/'} className="button">
+        {example ? '내 사건으로 직접 재판하기' : '새로운 사건 시작하기'} <ArrowRight size={17} />
       </Link>
-      <details className="verdict-record transcript">
+      <details className="verdict-record transcript" open={example}>
         <summary>
           <FileText size={16} /> 재판 기록 확인하기
         </summary>
@@ -1347,4 +1394,20 @@ function VerdictPage({ trial, autoRead = false }: { trial: Trial; autoRead?: boo
       </details>
     </main>
   );
+}
+
+function ExamplePage() {
+  const { id } = useParams();
+  const trial = EXAMPLE_TRIALS.find((t) => t.id === `example-${id}`);
+  if (!trial)
+    return (
+      <main className="small-page">
+        <h1>찾을 수 없는 예시입니다.</h1>
+        <Link to="/example/plaintiff" className="button">
+          원고 모드 예시 보기
+        </Link>
+      </main>
+    );
+  // Keyed so switching examples resets the verdict page state.
+  return <VerdictPage key={trial.id} trial={trial} example />;
 }

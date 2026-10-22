@@ -103,6 +103,44 @@ test('F: connection errors preserve the story and can be retried', async ({ page
   await expect(page.getByRole('alert')).toContainText('AI 연결 설정이 필요합니다.');
   await expect(page.getByLabel('사건 내용')).not.toBeEmpty();
   await expect(page.getByRole('button', { name: '재판 시작하기' })).toBeEnabled();
+  // A configuration error is not the model being busy, so no example link.
+  await expect(page.getByRole('link', { name: /예시 재판 보기/ })).toHaveCount(0);
+});
+
+test('recorded example trials are reachable from home and from an AI busy error', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: /예시 재판 먼저 보기/ }).click();
+  await expect(page).toHaveURL(/\/example\/plaintiff$/);
+  await expect(page.getByRole('note')).toContainText('실제 Gemini가 생성한 응답을 그대로 저장한');
+  await expect(page.getByText('원고 일부 승소 및 화해 권고')).toBeVisible();
+  // The transcript is open so the whole hearing is visible, and the shareable image is hidden.
+  await expect(page.getByText('서운했지만 화해하고 싶어요.').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /판결문 이미지 저장/ })).toHaveCount(0);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBeTruthy();
+  await page.screenshot({ path: `artifacts/example-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole('link', { name: '판사 모드 예시' }).click();
+  await expect(page.getByRole('heading', { name: '판사님의 판결이 내려졌습니다.' })).toBeVisible();
+  await expect(page.locator('.verdict-result')).toHaveText('양측 일부 책임');
+
+  await page.goto('/intake/plaintiff');
+  await page.getByRole('button', { name: /사라진 마지막 치킨/ }).click();
+  await page.route('**/api/trials', (route) =>
+    route.fulfill({
+      status: 429,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'AI_BUSY', message: 'AI 서버가 혼잡합니다.' } }),
+    }),
+  );
+  await page.getByRole('button', { name: '재판 시작하기' }).click();
+  await page
+    .getByRole('alert')
+    .getByRole('link', { name: /예시 재판 보기/ })
+    .click();
+  await expect(page).toHaveURL(/\/example\/plaintiff$/);
 });
 
 const png = Buffer.from(
