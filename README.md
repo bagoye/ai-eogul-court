@@ -50,23 +50,23 @@ npm run dev:demo
 
 ## 환경변수
 
-| 이름                    | 기본값 / 용도                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------ |
-| `GEMINI_API_KEY`        | 서버 전용 비밀 값. `.env`는 Git에서 제외                                             |
-| `GEMINI_MODEL`          | `gemini-3.8-flash`, 모델 교체 가능                                                   |
-| `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite`. 첫 시도 실패 시 이 모델로 재시도. 비우면 같은 모델로 재시도 |
-| `GEMINI_THINKING_LEVEL` | `low`. `default`·`minimal`·`medium`·`high`로 변경 가능                               |
-| `AI_MODE`               | `gemini`. 개발 시에만 `mock` 허용                                                    |
-| `PORT`                  | API 포트 `3001`                                                                      |
-| `CLIENT_PORT`           | Vite 포트 `5173`                                                                     |
-| `HOST`                  | 개발 `127.0.0.1`, 프로덕션 `0.0.0.0`                                                 |
-| `APP_ORIGIN`            | 개발 `http://localhost:5173`. 프로덕션은 실제 HTTPS origin                           |
-| `NODE_ENV`              | 개발 `development`. `npm start`가 `production` 지정                                  |
-| `TRUST_PROXY_HOPS`      | 비움. 프록시 뒤에서 실행할 때 `1`~`5`. Vercel은 `1`                                  |
-| `DAILY_TRIAL_LIMIT`     | 프로덕션 `20`, 개발 제한 없음. IP당 하루(한국 시간) 접수 수. `0`이면 끔              |
-| `KV_REST_API_URL`       | 비움. Upstash Redis REST URL. Vercel의 Upstash 연동이 자동 주입                      |
-| `KV_REST_API_TOKEN`     | 비움. Upstash Redis REST 토큰(비밀 값). URL과 함께 있을 때만 Redis 사용              |
-| `UPSTASH_REDIS_REST_*`  | `_URL`·`_TOKEN`. Upstash 콘솔에서 직접 만든 경우 위 두 값 대신 사용 가능             |
+| 이름                    | 기본값 / 용도                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`        | 서버 전용 비밀 값. `.env`는 Git에서 제외                                               |
+| `GEMINI_MODEL`          | `gemini-3.5-flash-lite`. 무료 등급 하루 500회. 모델 교체 가능                          |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.8-flash`. 첫 시도 실패 시 이 모델로 재시도(무료 하루 20회). 비우면 같은 모델 |
+| `GEMINI_THINKING_LEVEL` | `low`. `default`·`minimal`·`medium`·`high`로 변경 가능                                 |
+| `AI_MODE`               | `gemini`. 개발 시에만 `mock` 허용                                                      |
+| `PORT`                  | API 포트 `3001`                                                                        |
+| `CLIENT_PORT`           | Vite 포트 `5173`                                                                       |
+| `HOST`                  | 개발 `127.0.0.1`, 프로덕션 `0.0.0.0`                                                   |
+| `APP_ORIGIN`            | 개발 `http://localhost:5173`. 프로덕션은 실제 HTTPS origin                             |
+| `NODE_ENV`              | 개발 `development`. `npm start`가 `production` 지정                                    |
+| `TRUST_PROXY_HOPS`      | 비움. 프록시 뒤에서 실행할 때 `1`~`5`. Vercel은 `1`                                    |
+| `DAILY_TRIAL_LIMIT`     | 프로덕션 `20`, 개발 제한 없음. IP당 하루(한국 시간) 접수 수. `0`이면 끔                |
+| `KV_REST_API_URL`       | 비움. Upstash Redis REST URL. Vercel의 Upstash 연동이 자동 주입                        |
+| `KV_REST_API_TOKEN`     | 비움. Upstash Redis REST 토큰(비밀 값). URL과 함께 있을 때만 Redis 사용                |
+| `UPSTASH_REDIS_REST_*`  | `_URL`·`_TOKEN`. Upstash 콘솔에서 직접 만든 경우 위 두 값 대신 사용 가능               |
 
 Redis URL과 토큰이 **둘 다** 있으면 재판 기록·멱등성 결과·처리 잠금·요청 속도 제한을 Redis에 저장하고, 없으면 지금처럼 서버 메모리에 저장합니다. `npm run dev`, `dev:demo`, 테스트는 Redis 없이 동작합니다. 로컬 `.env`에 Redis 값을 넣으면 개발 서버도 그 Redis를 사용하므로, 운영 DB 값은 넣지 마세요.
 
@@ -127,7 +127,7 @@ stateDiagram-v2
 
 ## AI 연동과 사실 관리
 
-공식 [Google Gen AI JavaScript SDK](https://github.com/googleapis/js-genai), [모델 목록](https://ai.google.dev/gemini-api/docs/models), [구조화 출력 문서](https://ai.google.dev/gemini-api/docs/structured-output)를 확인하고 구성했습니다. 공식 목록의 안정 버전 `gemini-3.8-flash`를 기본값으로 선택했습니다(확인일: 2026-10-21). 사용 가능 여부와 할당량은 프로젝트 및 지역에 따라 달라질 수 있으므로 `.env`에서 변경할 수 있습니다.
+공식 [Google Gen AI JavaScript SDK](https://github.com/googleapis/js-genai), [모델 목록](https://ai.google.dev/gemini-api/docs/models), [구조화 출력 문서](https://ai.google.dev/gemini-api/docs/structured-output)를 확인하고 구성했습니다. 처음에는 `gemini-3.8-flash`를 기본값으로 두었으나, 무료 등급 한도가 하루 20회(재판 약 5건)뿐이라 실제 평가에서 대부분의 요청이 `429`로 거절되었습니다. 그래서 하루 500회·분당 15회인 `gemini-3.5-flash-lite`를 기본 모델로, `gemini-3.8-flash`를 예비 모델로 바꾸었습니다(한도 확인일: 2026-10-22, AI Studio 사용량 화면). 원고 모드에서 기본 모델이 변호사·검사 중 한 명의 대사만 보내면 예비 모델로 양쪽 대사를 다시 받고, 예비 모델도 실패하면 받아 둔 한쪽 대사로 진행합니다. 할당량은 프로젝트·지역·시점에 따라 달라질 수 있으므로 `.env`에서 변경할 수 있습니다.
 
 한 번의 서버 호출이 여러 캐릭터의 짧은 대사를 JSON으로 생성합니다. 역할 규칙은 `systemInstruction`, 사용자 입력과 기록은 별도 JSON 자료로 전달합니다. 원고 모드에는 변호사·검사, 판사 모드 초기에는 원고·피고, 심문에는 선택한 당사자만 허용합니다. 질문을 일반 대사에 숨기지 않도록 별도 필드로 받고, 추가 물음표가 있는 대사는 검증 실패로 처리합니다.
 

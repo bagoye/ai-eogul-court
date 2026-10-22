@@ -266,6 +266,7 @@ const items = {
       },
     };
     for (const [name, run] of Object.entries(paths)) {
+      secondObjection = undefined;
       const c = new Client();
       const t = await run(c, await start(c, 5, { mode: 'plaintiff', summary: CHICKEN }));
       const checks = {
@@ -356,8 +357,8 @@ const items = {
 
 const env = {
   date: new Date().toISOString(),
-  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.5-flash-lite',
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+  GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-3.8-flash',
   GEMINI_THINKING_LEVEL: process.env.GEMINI_THINKING_LEVEL || 'low',
   commit: (() => {
     try {
