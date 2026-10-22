@@ -172,6 +172,43 @@ describe.each(stores)('HTTP API (%s store)', (_name, newStore) => {
       .send(data())
       .expect(201);
   });
+  it('limits trials per visitor per Korean day, resetting at midnight KST', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-22T05:00:00Z'));
+      vi.stubEnv('DAILY_TRIAL_LIMIT', '2');
+      // Development mode: the production cookie is Secure and would not come back over HTTP.
+      const app = make({ mode: 'mock' });
+      // An idempotent replay is not counted; separate cookies from one IP share the limit.
+      const agent = request.agent(app);
+      const payload = data();
+      await agent.post('/api/trials').send(payload).expect(201);
+      await agent.post('/api/trials').send(payload).expect(201);
+      await request(app).post('/api/trials').send(data()).expect(201);
+      const limited = await request(app).post('/api/trials').send(data()).expect(429);
+      expect(limited.body.error.code).toBe('DAILY_LIMIT');
+      vi.setSystemTime(new Date('2026-10-22T15:00:01Z'));
+      await request(app).post('/api/trials').send(data()).expect(201);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('defaults the daily limit to 20 in production only and validates it', async () => {
+    const production = make({ production: true, mode: 'gemini', provider: mockProvider });
+    const development = make({ mode: 'mock' });
+    for (let i = 0; i < 20; i++) {
+      await request(production).post('/api/trials').send(data()).expect(201);
+      await request(development).post('/api/trials').send(data()).expect(201);
+    }
+    await request(production).post('/api/trials').send(data()).expect(429);
+    await request(development).post('/api/trials').send(data()).expect(201);
+    vi.stubEnv('DAILY_TRIAL_LIMIT', '0');
+    const unlimited = make({ production: true, mode: 'gemini', provider: mockProvider });
+    for (let i = 0; i < 21; i++)
+      await request(unlimited).post('/api/trials').send(data()).expect(201);
+    vi.stubEnv('DAILY_TRIAL_LIMIT', 'many');
+    expect(() => make({ mode: 'mock' })).toThrow('DAILY_TRIAL_LIMIT');
+  });
   it('trusts a configured proxy hop count without globally trusting forwarding headers', () => {
     expect(make({ mode: 'mock' }).get('trust proxy')).toBe(false);
     vi.stubEnv('TRUST_PROXY_HOPS', '1');

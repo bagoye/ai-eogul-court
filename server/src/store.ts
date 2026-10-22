@@ -25,6 +25,9 @@ export interface CourtStore {
   counts(owner: string): Promise<{ total: number; owned: number }>;
   getCompleted(key: string): Promise<Completed | undefined>;
   setCompleted(key: string, value: Completed): Promise<void>;
+  getCounter(key: string): Promise<number>;
+  /** Adds one; the counter disappears `ttl` ms after its first increment. */
+  incrementCounter(key: string, ttl: number): Promise<void>;
   /** Resolves to a release function, or undefined when another request holds the lock. */
   lock(id: string): Promise<(() => Promise<void>) | undefined>;
   /** Undefined keeps express-rate-limit's per-process MemoryStore. */
@@ -35,12 +38,14 @@ export function createMemoryStore(): CourtStore {
   const sessions = new Map<string, Entry & { touched: number }>();
   const completed = new Map<string, Completed & { touched: number }>();
   const locks = new Set<string>();
+  const counters = new Map<string, { count: number; expires: number }>();
   return {
     kind: 'memory',
     async sweep() {
       const now = Date.now();
       for (const [id, entry] of sessions) if (now - entry.touched > TTL) sessions.delete(id);
       for (const [key, entry] of completed) if (now - entry.touched > TTL) completed.delete(key);
+      for (const [key, entry] of counters) if (now >= entry.expires) counters.delete(key);
     },
     async getTrial(id) {
       return sessions.get(id);
@@ -63,6 +68,14 @@ export function createMemoryStore(): CourtStore {
     },
     async setCompleted(key, value) {
       completed.set(key, { ...value, touched: Date.now() });
+    },
+    async getCounter(key) {
+      return counters.get(key)?.count ?? 0;
+    },
+    async incrementCounter(key, ttl) {
+      const entry = counters.get(key);
+      if (entry) entry.count++;
+      else counters.set(key, { count: 1, expires: Date.now() + ttl });
     },
     async lock(id) {
       if (locks.has(id)) return undefined;
@@ -163,6 +176,18 @@ export function createRedisStore(redis: RedisClient): CourtStore {
     async setCompleted(key, value) {
       // Not refreshed on replay, matching the in-memory store.
       await run('SET', `${PREFIX}done:${key}`, JSON.stringify(value), 'PX', TTL);
+    },
+    async getCounter(key) {
+      return Number((await run('GET', `${PREFIX}count:${key}`)) ?? 0);
+    },
+    async incrementCounter(key, ttl) {
+      await redis.exec(
+        [
+          ['INCR', `${PREFIX}count:${key}`],
+          ['PEXPIRE', `${PREFIX}count:${key}`, ttl, 'NX'],
+        ],
+        { atomic: true },
+      );
     },
     async lock(id) {
       const key = `${PREFIX}lock:${id}`;

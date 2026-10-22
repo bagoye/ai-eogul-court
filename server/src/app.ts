@@ -12,6 +12,9 @@ import { intakeSchema, actionSchema, createTrial, advance } from './engine.js';
 import { AppError } from './errors.js';
 import { storeFromEnv, TTL, type CourtStore } from './store.js';
 
+// The day key changes at midnight KST; keep the counter a little past that.
+const DAY_TTL = 25 * 60 * 60 * 1000;
+
 export function createApp(
   options: {
     provider?: Provider;
@@ -27,6 +30,11 @@ export function createApp(
   if (production && mode === 'mock') throw new Error('Mock AI is disabled in production');
   const provider = options.provider || (mode === 'mock' ? mockProvider : createGeminiProvider());
   const store = options.store || storeFromEnv();
+  // Keeps one visitor from spending a free model quota. Production defaults to 20; 0 disables.
+  const dailyRaw = process.env.DAILY_TRIAL_LIMIT;
+  if (dailyRaw && !/^\d{1,4}$/.test(dailyRaw))
+    throw new Error('DAILY_TRIAL_LIMIT must be a whole number');
+  const dailyLimit = dailyRaw ? Number(dailyRaw) : production ? 20 : 0;
   const app = express();
   app.disable('x-powered-by');
   const proxyHops = process.env.TRUST_PROXY_HOPS;
@@ -171,6 +179,13 @@ export function createApp(
   app.post('/api/trials', async (req, res) => {
     const data = intakeSchema.parse(req.body);
     const owner = res.locals.owner as string;
+    // Per IP and Korean calendar day; the IP is hashed so Redis never holds it raw.
+    const day = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const visitor = createHash('sha256')
+      .update(req.ip || 'unknown')
+      .digest('hex')
+      .slice(0, 32);
+    const dailyKey = `daily:${day}:${visitor}`;
     const result = await mutate(owner, data.requestId, `create:${owner}`, data, async () => {
       const { total, owned } = await store.counts(owner);
       if (total >= 1000 || owned >= 15)
@@ -179,8 +194,15 @@ export function createApp(
           'CAPACITY',
           '진행 중인 재판이 많습니다. 잠시 후 다시 접수해 주세요.',
         );
+      if (dailyLimit && (await store.getCounter(dailyKey)) >= dailyLimit)
+        throw new AppError(
+          429,
+          'DAILY_LIMIT',
+          `하루에 접수할 수 있는 재판은 ${dailyLimit}건입니다. 내일 다시 이용해 주세요.`,
+        );
       const trial = await createTrial(data, provider, mode);
       await store.saveTrial(trial.id, { owner, trial });
+      if (dailyLimit) await store.incrementCounter(dailyKey, DAY_TTL);
       return trial;
     });
     res.status(201).json(result);
