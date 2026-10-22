@@ -3,6 +3,8 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { createApp } from './app.js';
 import { createGeminiProvider, mockProvider } from './ai.js';
+import { createRedisStore, type CourtStore } from './store.js';
+import { createFakeRedis } from './redis.fake.js';
 
 const data = () => ({
   requestId: randomUUID(),
@@ -10,9 +12,16 @@ const data = () => ({
   summary: '동생이 제가 남긴 마지막 치킨을 말도 없이 먹어서 서운해요. 약속은 따로 정하지 않았어요.',
 });
 afterEach(() => vi.unstubAllEnvs());
-describe('HTTP API', () => {
+// Every HTTP behaviour must hold for both stores.
+const stores: [string, () => CourtStore | undefined][] = [
+  ['memory', () => undefined],
+  ['redis', () => createRedisStore(createFakeRedis().client)],
+];
+describe.each(stores)('HTTP API (%s store)', (_name, newStore) => {
+  const make = (options: Parameters<typeof createApp>[0] = {}) =>
+    createApp({ store: newStore(), ...options });
   it('creates, restores, ends and completes a trial; repeated request is idempotent', async () => {
-    const app = createApp({ mode: 'mock' });
+    const app = make({ mode: 'mock' });
     const agent = request.agent(app);
     await agent.get('/api/health').expect(200);
     const payload = data();
@@ -33,7 +42,7 @@ describe('HTTP API', () => {
   });
   it('rejects parallel mutation without advancing twice', async () => {
     let release: (() => void) | undefined;
-    const app = createApp({
+    const app = make({
       mode: 'mock',
       provider: async (c) => {
         if (c.operation === 'answer')
@@ -64,7 +73,7 @@ describe('HTTP API', () => {
     expect((await first).body.questionCount).toBe(2);
   });
   it('isolates sessions by HttpOnly cookie', async () => {
-    const app = createApp({ mode: 'mock' });
+    const app = make({ mode: 'mock' });
     const agent = request.agent(app);
     const response = await agent.post('/api/trials').send(data());
     expect(response.headers['set-cookie'][0]).toContain('HttpOnly');
@@ -76,14 +85,14 @@ describe('HTTP API', () => {
   });
   it('F: returns explicit missing-key error, never falls back to mock', async () => {
     vi.stubEnv('GEMINI_API_KEY', '');
-    const response = await request(createApp({ provider: createGeminiProvider(), mode: 'gemini' }))
+    const response = await request(make({ provider: createGeminiProvider(), mode: 'gemini' }))
       .post('/api/trials')
       .send(data())
       .expect(503);
     expect(response.body.error.code).toBe('AI_NOT_CONFIGURED');
   });
   it('rejects overly long, short and malformed input', async () => {
-    const app = createApp({ mode: 'mock' });
+    const app = make({ mode: 'mock' });
     await request(app)
       .post('/api/trials')
       .send({ ...data(), summary: '치킨' })
@@ -99,15 +108,15 @@ describe('HTTP API', () => {
       .expect(400);
   });
   it('rejects cross-origin writes and mock production configuration', async () => {
-    await request(createApp({ mode: 'mock' }))
+    await request(make({ mode: 'mock' }))
       .post('/api/trials')
       .set('Origin', 'https://untrusted.example')
       .send(data())
       .expect(403);
-    expect(() => createApp({ mode: 'mock', production: true })).toThrow('Mock AI is disabled');
+    expect(() => make({ mode: 'mock', production: true })).toThrow('Mock AI is disabled');
   });
   it('rejects request id reuse with changed payload', async () => {
-    const agent = request.agent(createApp({ mode: 'mock' }));
+    const agent = request.agent(make({ mode: 'mock' }));
     const payload = data();
     await agent.post('/api/trials').send(payload).expect(201);
     await agent
@@ -116,7 +125,7 @@ describe('HTTP API', () => {
       .expect(409);
   });
   it('records photo evidence for plaintiffs and rejects invalid or excess photos', async () => {
-    const agent = request.agent(createApp({ mode: 'mock' }));
+    const agent = request.agent(make({ mode: 'mock' }));
     const png = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' };
     const created = await agent
       .post('/api/trials')
@@ -151,7 +160,7 @@ describe('HTTP API', () => {
   });
   it('accepts only the configured APP_ORIGIN in production', async () => {
     vi.stubEnv('APP_ORIGIN', 'https://court.example.com');
-    const app = createApp({ production: true, mode: 'gemini', provider: mockProvider });
+    const app = make({ production: true, mode: 'gemini', provider: mockProvider });
     await request(app)
       .post('/api/trials')
       .set('Origin', 'https://other.example.com')
@@ -164,10 +173,10 @@ describe('HTTP API', () => {
       .expect(201);
   });
   it('trusts a configured proxy hop count without globally trusting forwarding headers', () => {
-    expect(createApp({ mode: 'mock' }).get('trust proxy')).toBe(false);
+    expect(make({ mode: 'mock' }).get('trust proxy')).toBe(false);
     vi.stubEnv('TRUST_PROXY_HOPS', '1');
-    expect(createApp({ mode: 'mock' }).get('trust proxy')).toBe(1);
+    expect(make({ mode: 'mock' }).get('trust proxy')).toBe(1);
     vi.stubEnv('TRUST_PROXY_HOPS', 'true');
-    expect(() => createApp({ mode: 'mock' })).toThrow('TRUST_PROXY_HOPS');
+    expect(() => make({ mode: 'mock' })).toThrow('TRUST_PROXY_HOPS');
   });
 });

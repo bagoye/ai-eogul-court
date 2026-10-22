@@ -10,23 +10,23 @@ import type { Trial } from '../../shared/types.js';
 import { createGeminiProvider, mockProvider, type Provider } from './ai.js';
 import { intakeSchema, actionSchema, createTrial, advance } from './engine.js';
 import { AppError } from './errors.js';
+import { storeFromEnv, TTL, type CourtStore } from './store.js';
 
-interface Entry {
-  owner: string;
-  trial: Trial;
-  touched: number;
-}
-const TTL = 2 * 60 * 60 * 1000;
 export function createApp(
-  options: { provider?: Provider; mode?: 'gemini' | 'mock'; production?: boolean } = {},
+  options: {
+    provider?: Provider;
+    mode?: 'gemini' | 'mock';
+    production?: boolean;
+    store?: CourtStore;
+    // Off on Vercel, where the CDN serves client/dist.
+    serveClient?: boolean;
+  } = {},
 ) {
   const production = options.production ?? process.env.NODE_ENV === 'production';
   const mode = options.mode || (process.env.AI_MODE === 'mock' ? 'mock' : 'gemini');
   if (production && mode === 'mock') throw new Error('Mock AI is disabled in production');
   const provider = options.provider || (mode === 'mock' ? mockProvider : createGeminiProvider());
-  const sessions = new Map<string, Entry>();
-  const completed = new Map<string, { fingerprint: string; result: Trial; touched: number }>();
-  const locks = new Set<string>();
+  const store = options.store || storeFromEnv();
   const app = express();
   app.disable('x-powered-by');
   const proxyHops = process.env.TRUST_PROXY_HOPS;
@@ -52,6 +52,10 @@ export function createApp(
     res.set('Cache-Control', 'no-store');
     next();
   });
+  const rateLimitStore = (name: string) => {
+    const limitStore = store.rateLimitStore(name);
+    return limitStore ? { store: limitStore } : {};
+  };
   const limitMessage = {
     error: { code: 'RATE_LIMIT', message: '요청이 잠시 많습니다. 1분 후 다시 시도해 주세요.' },
   };
@@ -60,6 +64,7 @@ export function createApp(
     rateLimit({
       windowMs: 60000,
       limit: 180,
+      ...rateLimitStore('all'),
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       message: limitMessage,
@@ -71,12 +76,13 @@ export function createApp(
       windowMs: 60000,
       limit: 40,
       skip: (req) => req.method === 'GET',
+      ...rateLimitStore('write'),
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       message: limitMessage,
     }),
   );
-  app.use('/api', (req, res, next) => {
+  app.use('/api', async (req, res, next) => {
     // Same-origin browser writes only. No cross-origin CORS permission.
     const origin = req.get('origin');
     const expected = process.env.APP_ORIGIN || (production ? undefined : 'http://localhost:5173');
@@ -102,9 +108,7 @@ export function createApp(
         path: '/api',
       });
     res.locals.owner = owner;
-    const now = Date.now();
-    for (const [id, entry] of sessions) if (now - entry.touched > TTL) sessions.delete(id);
-    for (const [key, entry] of completed) if (now - entry.touched > TTL) completed.delete(key);
+    await store.sweep();
     next();
   });
   app.get('/api/health', (_req, res) =>
@@ -112,11 +116,12 @@ export function createApp(
       ok: true,
       aiMode: mode,
       configured: mode === 'mock' || !!process.env.GEMINI_API_KEY,
+      store: store.kind,
     }),
   );
   app.get('/api/cases', (_req, res) => res.json(CASES));
-  app.get('/api/trials/:id', (req, res, next) => {
-    const entry = sessions.get(req.params.id);
+  app.get('/api/trials/:id', async (req, res, next) => {
+    const entry = await store.getTrial(req.params.id);
     if (!entry || entry.owner !== res.locals.owner)
       return next(
         new AppError(
@@ -125,7 +130,7 @@ export function createApp(
           '재판 기록이 만료되었거나 서버가 다시 시작되었습니다. 새 사건을 접수해 주세요.',
         ),
       );
-    entry.touched = Date.now();
+    await store.touchTrial(req.params.id, entry.owner);
     res.json(entry.trial);
   });
   async function mutate(
@@ -137,42 +142,45 @@ export function createApp(
   ) {
     const key = `${owner}:${requestId}`;
     const fingerprint = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    const saved = completed.get(key);
-    if (saved) {
-      if (saved.fingerprint !== fingerprint)
+    const replay = async () => {
+      const saved = await store.getCompleted(key);
+      if (saved && saved.fingerprint !== fingerprint)
         throw new AppError(
           409,
           'IDEMPOTENCY_CONFLICT',
           '요청 식별자가 다른 내용에 사용되었습니다.',
         );
-      return saved.result;
-    }
-    if (locks.has(lockId))
+      return saved?.result;
+    };
+    const saved = await replay();
+    if (saved) return saved;
+    const release = await store.lock(lockId);
+    if (!release)
       throw new AppError(409, 'REQUEST_PENDING', '이전 요청이 진행 중입니다. 잠시 기다려 주세요.');
-    locks.add(lockId);
     try {
+      // Another instance may have finished this request between the check and the lock.
+      const done = await replay();
+      if (done) return done;
       const result = await work();
-      completed.set(key, { fingerprint, result, touched: Date.now() });
+      await store.setCompleted(key, { fingerprint, result });
       return result;
     } finally {
-      locks.delete(lockId);
+      await release();
     }
   }
   app.post('/api/trials', async (req, res) => {
     const data = intakeSchema.parse(req.body);
     const owner = res.locals.owner as string;
     const result = await mutate(owner, data.requestId, `create:${owner}`, data, async () => {
-      if (
-        sessions.size >= 1000 ||
-        [...sessions.values()].filter((s) => s.owner === owner).length >= 15
-      )
+      const { total, owned } = await store.counts(owner);
+      if (total >= 1000 || owned >= 15)
         throw new AppError(
           429,
           'CAPACITY',
           '진행 중인 재판이 많습니다. 잠시 후 다시 접수해 주세요.',
         );
       const trial = await createTrial(data, provider, mode);
-      sessions.set(trial.id, { trial, owner, touched: Date.now() });
+      await store.saveTrial(trial.id, { owner, trial });
       return trial;
     });
     res.status(201).json(result);
@@ -180,28 +188,31 @@ export function createApp(
   app.post('/api/trials/:id/actions', async (req, res) => {
     const data = actionSchema.parse(req.body);
     const owner = res.locals.owner as string;
-    const entry = sessions.get(req.params.id);
-    if (!entry || entry.owner !== owner)
-      throw new AppError(
+    const missing = () =>
+      new AppError(
         404,
         'SESSION_EXPIRED',
         '재판 기록을 찾을 수 없습니다. 새 사건을 접수해 주세요.',
       );
+    const entry = await store.getTrial(req.params.id);
+    if (!entry || entry.owner !== owner) throw missing();
     const result = await mutate(
       owner,
       data.requestId,
       req.params.id,
       { ...data, trialId: req.params.id },
       async () => {
-        const trial = await advance(entry.trial, data, provider);
-        entry.trial = trial;
-        entry.touched = Date.now();
+        // Re-read under the lock: another instance may have advanced the trial meanwhile.
+        const current = await store.getTrial(req.params.id);
+        if (!current || current.owner !== owner) throw missing();
+        const trial = await advance(current.trial, data, provider);
+        await store.saveTrial(req.params.id, { owner, trial });
         return trial;
       },
     );
     res.json(result);
   });
-  if (production) {
+  if (options.serveClient ?? production) {
     const staticDir = fileURLToPath(new URL('../../../../client/dist/', import.meta.url));
     app.use(express.static(staticDir));
     app.get('/{*path}', (req, res, next) =>
