@@ -129,6 +129,7 @@ function record(item, run, checks, trial, note = '') {
 const summarize = (t) => ({
   phase: t.phase,
   questionCount: t.questionCount,
+  askedQuestionTopics: t.askedQuestionTopics,
   title: t.title,
   messages: transcript(t),
   claims: t.claims.map((c) => c.text),
