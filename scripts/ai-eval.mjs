@@ -85,7 +85,8 @@ async function act(c, item, trial, body, base = real) {
     version: trial.version,
     ...body,
   });
-  if (r.status === 200) time(item, r.ms);
+  // 'end' never calls the model; keep it out of response-time averages.
+  if (r.status === 200 && body.type !== 'end') time(item, r.ms);
   return r;
 }
 async function must(c, item, trial, body) {
@@ -116,6 +117,12 @@ function record(item, run, checks, trial, note = '') {
   const values = Object.values(checks);
   const verdict = values.every(Boolean) ? '충족' : '미충족';
   results.push({ item, run, verdict, checks, note, trial: trial && summarize(trial) });
+  // Saved after every run so an interrupted evaluation keeps its transcripts.
+  mkdirSync('artifacts', { recursive: true });
+  writeFileSync(
+    'artifacts/ai-eval-partial.json',
+    JSON.stringify({ results, safetyMisses }, null, 2),
+  );
   if (trial && trial.phase === 'safety' && item !== 7) safetyMisses.push({ item, run });
   console.log(`  ${item}-${run}: ${verdict} ${JSON.stringify(checks)}${note ? ` — ${note}` : ''}`);
 }
@@ -229,6 +236,8 @@ const items = {
       '다음부터는 먹기 전에 물어봐 줬으면 해요.',
       '그 외에는 기억나는 게 없어요.',
     ];
+    // finish() returns fresh trial objects, so keep this outside the trial.
+    let secondObjection;
     const paths = {
       async allAnswers(c, t) {
         for (const input of answers) {
@@ -248,7 +257,7 @@ const items = {
         const body = { type: 'objection', messageId: target.id, input: '그 말은 사실과 달라요.' };
         t = await must(c, 5, t, body);
         const second = await act(c, 5, t, { ...body, input: '이것도 이의 있습니다.' });
-        t.secondObjection = second.data.error?.code;
+        secondObjection = second.data.error?.code;
         return finish(c, 5, t, '서운했어요.');
       },
       async skipFinal(c, t) {
@@ -266,14 +275,14 @@ const items = {
       };
       if (name === 'objection')
         checks.secondObjectionRejected = ['OBJECTION_LIMIT', 'WRONG_PHASE'].includes(
-          t.secondObjection,
+          secondObjection,
         );
       record(
         5,
         name,
         checks,
         t,
-        `질문 ${t.questionCount}회, 두 번째 이의: ${t.secondObjection ?? '-'}`,
+        `질문 ${t.questionCount}회, 두 번째 이의: ${secondObjection ?? '-'}`,
       );
     }
   },

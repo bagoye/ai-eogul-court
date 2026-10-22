@@ -16,9 +16,10 @@
 - 원고 모드 사진 증거: 접수와 답변 때 재판당 최대 3장. 브라우저에서 축소·재인코딩해 위치정보(EXIF)를 지우고, Gemini가 사진마다 객관적 관찰 기록을 남깁니다. 서버는 사진 원본을 보관하지 않고 관찰 기록만 '사진 증거'로 표시하며, 진위·촬영 시점은 미확인으로 다룹니다.
 - 보이스봇: 법정 대사를 역할별 목소리(높낮이·속도, 기기에 한국어 음성이 여러 개면 서로 다른 음성)로 읽고, 판사의 질문이나 당사자 답변이 끝나면 마이크를 자동으로 켜서 답을 받아 적습니다. 판결문도 읽어 줍니다. 음성 대화는 화면 상단에서 끌 수 있고 설정은 브라우저에 기억됩니다. 듣기를 시작하면 읽기를 멈춰 법정 음성이 다시 인식되지 않게 합니다.
 - 음성 입력·출력은 브라우저 Web Speech API(인식·합성)를 사용해 별도 AI 비용이 없습니다. 지원 브라우저(Chrome, Edge, Safari)에서만 버튼이 보이며, 음성 인식은 브라우저의 음성 인식 서비스에서 처리됩니다. 목소리 품질은 기기에 설치된 음성에 따라 다릅니다.
+- 예시 재판: 실제 Gemini 평가에서 저장한 원고 모드·판사 모드 재판 2건을 `/example/plaintiff`, `/example/judge`에서 보여 줍니다. 첫 화면과 `AI_BUSY`·`AI_UNAVAILABLE`·`DAILY_LIMIT` 오류 안내에서 연결되며, AI를 호출하지 않아 한도와 무관합니다. 저장된 응답이라는 점을 화면에 표시하고 문장은 고치지 않습니다(`shared/examples.ts`).
 - 판결문은 개인정보 확인 후 SVG 이미지로 다운로드할 수 있습니다. PNG 내보내기는 후속 범위입니다.
 
-**현재 확인된 범위:** 프로덕션 빌드, TypeScript, ESLint, 서버/SDK 계약·음성 배정·저장소 테스트 56개(HTTP API 테스트는 메모리·Redis 저장소에서 각각 실행), 데스크톱·모바일 Chromium E2E 14개 통과. E2E의 음성 입력·출력은 가짜 음성 인식·합성 객체로 흐름만 검증했으며 실제 마이크 인식과 음성 품질은 확인하지 않았습니다. E2E는 명시적인 개발용 목업으로 진행했습니다. 실제 Gemini 모델의 대화 품질·지연·의미적 사실 정확성은 아직 검증하지 않았습니다.
+**현재 확인된 범위:** 프로덕션 빌드, TypeScript, ESLint, 서버/SDK 계약·음성 배정·저장소 테스트 62개(HTTP API 테스트는 메모리·Redis 저장소에서 각각 실행), 데스크톱·모바일 Chromium E2E 16개 통과. E2E의 음성 입력·출력은 가짜 음성 인식·합성 객체로 흐름만 검증했으며 실제 마이크 인식과 음성 품질은 확인하지 않았습니다. E2E는 명시적인 개발용 목업으로 진행했습니다. 실제 Gemini 평가는 무료 한도 때문에 일부 항목만 진행했으며, 결과와 발견한 문제는 [실제 AI 평가](docs/AI_EVALUATION.md)에 기록했습니다.
 
 ## 빠른 실행
 
@@ -62,6 +63,7 @@ npm run dev:demo
 | `APP_ORIGIN`            | 개발 `http://localhost:5173`. 프로덕션은 실제 HTTPS origin                           |
 | `NODE_ENV`              | 개발 `development`. `npm start`가 `production` 지정                                  |
 | `TRUST_PROXY_HOPS`      | 비움. 프록시 뒤에서 실행할 때 `1`~`5`. Vercel은 `1`                                  |
+| `DAILY_TRIAL_LIMIT`     | 프로덕션 `20`, 개발 제한 없음. IP당 하루(한국 시간) 접수 수. `0`이면 끔              |
 | `KV_REST_API_URL`       | 비움. Upstash Redis REST URL. Vercel의 Upstash 연동이 자동 주입                      |
 | `KV_REST_API_TOKEN`     | 비움. Upstash Redis REST 토큰(비밀 값). URL과 함께 있을 때만 Redis 사용              |
 | `UPSTASH_REDIS_REST_*`  | `_URL`·`_TOKEN`. Upstash 콘솔에서 직접 만든 경우 위 두 값 대신 사용 가능             |
@@ -89,6 +91,7 @@ server/
 shared/
   types.ts             # 화면과 서버가 공유하는 데이터 계약
   cases.ts             # 원고/피고 진술과 확정 사실이 분리된 사건 3개
+  examples.ts          # 실제 Gemini 응답을 저장한 예시 재판 2건
 api/index.js           # Vercel Function 엔트리(빌드된 Express 앱)
 vercel.json            # Vercel 빌드·재작성·정적 보안 헤더
 e2e/court.spec.ts       # 데스크톱·모바일 실제 브라우저 흐름
@@ -151,7 +154,7 @@ stateDiagram-v2
 - 무작위 세션 ID와 HttpOnly·SameSite 쿠키로 소유권을 확인합니다. 프로덕션 쿠키는 Secure이며 HTTPS가 필요합니다.
 - 모델에 사연이 전송되므로 이름·연락처 등 개인정보를 적지 않도록 접수 화면에서 안내합니다. 원문·API 키·SDK 오류 내용을 로그에 출력하지 않습니다.
 - 심각한 피해는 서버 키워드 필터와 모델의 의미 분류로 확인하고, 대사를 표시하지 않은 채 별도 안전 화면으로 보냅니다. 키워드 필터에는 오탐·누락 가능성이 있습니다.
-- 요청 크기, 입력 길이, 보관 세션 수, 요청 속도 제한과 보안 응답 헤더를 적용합니다. 인증·장기 보관·결제는 이번 범위에 없습니다.
+- 요청 크기, 입력 길이, 보관 세션 수, 요청 속도 제한과 보안 응답 헤더를 적용합니다. 프로덕션에서는 무료 AI 한도를 한 사람이 다 쓰지 않도록 IP당 하루 접수 수를 제한합니다(기본 20건, 한국 시간 자정 초기화, `429 DAILY_LIMIT`). IP는 해시로만 저장합니다. 인증·장기 보관·결제는 이번 범위에 없습니다.
 
 ## 빌드와 테스트
 
@@ -184,15 +187,16 @@ npm start
 
 Vercel은 요청마다 다른 함수 인스턴스가 처리할 수 있으므로, 재판 기록을 **Upstash Redis**(Vercel Marketplace 무료 플랜)에 저장합니다.
 
-| 구성           | 내용                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------- |
-| 화면           | `npm run build`의 `client/dist`를 Vercel CDN이 제공. 없는 경로는 `index.html`로 재작성(SPA)             |
-| API            | `/api/*` → `api/index.js` 함수 하나가 Express 앱 전체를 처리. 최대 실행 60초                            |
-| 보안 헤더      | API는 helmet, CDN 페이지는 `vercel.json`의 같은 헤더. 둘이 같은지 테스트로 검사                         |
-| 재판·멱등성    | `court:trial:{id}`, `court:done:{owner}:{requestId}`. 2시간 TTL, 재판은 조회·진행 시 연장               |
+| 구성           | 내용                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| 화면           | `npm run build`의 `client/dist`를 Vercel CDN이 제공. 없는 경로는 `index.html`로 재작성(SPA)              |
+| API            | `/api/*` → `api/index.js` 함수 하나가 Express 앱 전체를 처리. 최대 실행 60초                             |
+| 보안 헤더      | API는 helmet, CDN 페이지는 `vercel.json`의 같은 헤더. 둘이 같은지 테스트로 검사                          |
+| 재판·멱등성    | `court:trial:{id}`, `court:done:{owner}:{requestId}`. 2시간 TTL, 재판은 조회·진행 시 연장                |
 | 처리 잠금      | `court:lock:{id}`를 `SET NX PX 75000`으로 획득, 토큰이 같을 때만 해제. 함수가 중단돼도 75초 뒤 자동 해제 |
-| 세션 수 제한   | 만료 시각을 점수로 둔 정렬 집합으로 전체 1000개·소유자당 15개 유지                                      |
-| 요청 속도 제한 | 분당 180회·쓰기 40회를 Redis 카운터로 모든 인스턴스가 공유                                              |
+| 세션 수 제한   | 만료 시각을 점수로 둔 정렬 집합으로 전체 1000개·소유자당 15개 유지                                       |
+| 요청 속도 제한 | 분당 180회·쓰기 40회를 Redis 카운터로 모든 인스턴스가 공유                                               |
+| 하루 접수 제한 | `court:count:daily:{날짜}:{IP 해시}`. IP당 하루 20건(`DAILY_TRIAL_LIMIT`), 25시간 뒤 자동 삭제           |
 
 Redis 클라이언트는 Upstash REST API를 `fetch`로 직접 호출하므로 추가 패키지가 없습니다. Redis에 연결할 수 없으면 메모리로 바꾸지 않고 `500 SERVER_ERROR`를 반환합니다. 인스턴스마다 기록이 달라지는 것을 막기 위해서입니다.
 
@@ -205,7 +209,7 @@ Redis 클라이언트는 Upstash REST API를 `fetch`로 직접 호출하므로 �
    - `GEMINI_API_KEY`: Gemini API 키. Sensitive로 저장
    - `APP_ORIGIN`: `https://<프로젝트>.vercel.app`처럼 실제 주소. 끝에 `/` 없이 정확히 입력
    - `TRUST_PROXY_HOPS`: `1`. 사용자별 요청 속도 제한에 필요
-   - 선택: `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `GEMINI_THINKING_LEVEL`
+   - 선택: `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `GEMINI_THINKING_LEVEL`, `DAILY_TRIAL_LIMIT`(기본 20)
    - 넣지 않을 값: `NODE_ENV`(빌드에 필요한 개발 의존성 설치가 빠짐), `AI_MODE=mock`(프로덕션에서는 서버가 시작되지 않음), `PORT`, `HOST`
 5. **Deployments**에서 최신 배포를 **Redeploy**합니다. 환경변수는 새 배포부터 적용됩니다.
 
@@ -221,7 +225,7 @@ Redis 클라이언트는 Upstash REST API를 `fetch`로 직접 호출하므로 �
 
 - **요청 크기:** Vercel 함수 요청 본문은 4.5MB까지입니다. 사진은 장당 base64 1,400,000자로 줄여 올리므로 3장과 사연 5,000자를 합쳐도 약 4.22MB로 제한 안에 들어갑니다.
 - **Preview 배포:** 주소가 `APP_ORIGIN`과 달라 쓰기 요청이 `403 ORIGIN`으로 거절됩니다. Preview에서 시험하려면 Preview 환경에 그 주소의 `APP_ORIGIN`을 따로 지정합니다. 커스텀 도메인을 연결하면 `APP_ORIGIN`을 바꾸고 다시 배포합니다.
-- **무료 한도:** 재판 1건(접수·심문 3회·판결)에 Redis 명령이 약 80~120개 쓰입니다(측정값: 접수 19, 진행 1회 17, 조회 8). 월 명령 한도는 Upstash 대시보드에서 확인하세요. Gemini 무료 등급 한도에 걸리면 `429 AI_BUSY` 안내가 표시됩니다.
+- **무료 한도:** 재판 1건(접수·심문 3회·판결)에 Redis 명령이 약 80~120개 쓰입니다(측정값: 접수 19, 진행 1회 17, 조회 8). 월 명령 한도는 Upstash 대시보드에서 확인하세요. Gemini 무료 등급 한도에 걸리면 `429 AI_BUSY` 안내가 표시됩니다. 하루 접수 제한은 IP 기준이라, 같은 공용 와이파이나 통신사 IP를 쓰는 여러 사람이 한도를 나눠 쓸 수 있습니다.
 - Redis 동작은 실제 Redis 없이 Upstash 명령을 흉내 내는 테스트용 클라이언트로 검증했습니다(여러 인스턴스 공유, TTL, 잠금, 세션 수, 속도 제한). 실제 Upstash에서는 위 확인 절차로 점검합니다.
 
 ## 남은 검증과 개선
