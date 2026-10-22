@@ -83,7 +83,8 @@ export function createApp(
     rateLimit({
       windowMs: 60000,
       limit: 40,
-      skip: (req) => req.method === 'GET',
+      // HEAD is a read too (monitors, curl -I); only real writes share the 40/min budget.
+      skip: (req) => req.method === 'GET' || req.method === 'HEAD',
       ...rateLimitStore('write'),
       standardHeaders: 'draft-8',
       legacyHeaders: false,
@@ -202,7 +203,9 @@ export function createApp(
         );
       const trial = await createTrial(data, provider, mode);
       await store.saveTrial(trial.id, { owner, trial });
-      if (dailyLimit) await store.incrementCounter(dailyKey, DAY_TTL);
+      // Best effort: the trial is already saved, and failing here would leave no idempotent
+      // result, so a retry of the same request would file a second trial.
+      if (dailyLimit) await store.incrementCounter(dailyKey, DAY_TTL).catch(() => undefined);
       return trial;
     });
     res.status(201).json(result);

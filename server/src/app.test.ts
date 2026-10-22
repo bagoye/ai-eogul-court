@@ -3,7 +3,7 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { createApp } from './app.js';
 import { createGeminiProvider, mockProvider } from './ai.js';
-import { createRedisStore, type CourtStore } from './store.js';
+import { createMemoryStore, createRedisStore, type CourtStore } from './store.js';
 import { createFakeRedis } from './redis.fake.js';
 
 const data = () => ({
@@ -192,6 +192,21 @@ describe.each(stores)('HTTP API (%s store)', (_name, newStore) => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it('keeps a filed trial idempotent when the daily counter cannot be written', async () => {
+    vi.stubEnv('DAILY_TRIAL_LIMIT', '5');
+    const store = newStore() ?? createMemoryStore();
+    const failing = { ...store, incrementCounter: async () => Promise.reject(new Error('down')) };
+    const agent = request.agent(createApp({ mode: 'mock', store: failing }));
+    const payload = data();
+    const first = await agent.post('/api/trials').send(payload).expect(201);
+    const again = await agent.post('/api/trials').send(payload).expect(201);
+    expect(again.body.id).toBe(first.body.id);
+  });
+  it('does not count HEAD requests against the write limit', async () => {
+    const app = make({ mode: 'mock' });
+    for (let i = 0; i < 41; i++) await request(app).head('/api/health').expect(200);
+    await request(app).post('/api/trials').send(data()).expect(201);
   });
   it('defaults the daily limit to 20 in production only and validates it', async () => {
     const production = make({ production: true, mode: 'gemini', provider: mockProvider });
